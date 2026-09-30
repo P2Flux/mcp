@@ -246,9 +246,14 @@ export async function withdrawPrepaid(config: Config, input: string, f: Fetch = 
   try {
     settled = (await scheme.refund(url.toString(), { fetch: named })) as typeof settled
   } catch (err) {
-    throw new Error(`the prepaid balance could not be taken back: ${(err as Error).message}. It stays yours: the site returns balances idle for a week on its own.`)
+    const message = (err as Error).message
+    if (/refund_too_early/.test(message)) throw new Error('this balance was barely used, so it is returned after 24 hours without use - ask again tomorrow. It stays yours meanwhile.')
+    throw new Error(`the prepaid balance could not be taken back: ${message}. It stays yours: the site returns balances idle for a week on its own.`)
   }
-  if (!settled.success) throw new Error(`the site did not return the balance (${settled.errorReason ?? 'no reason given'}). It stays yours: the site returns balances idle for a week on its own.`)
+  if (!settled.success) {
+    if (/refund_too_early/.test(String(settled.errorReason))) throw new Error('this balance was barely used, so it is returned after 24 hours without use - ask again tomorrow. It stays yours meanwhile.')
+    throw new Error(`the site did not return the balance (${settled.errorReason ?? 'no reason given'}). It stays yours: the site returns balances idle for a week on its own.`)
+  }
   const transaction = typeof settled.transaction === 'string' && /^0x[0-9a-fA-F]{64}$/.test(settled.transaction) ? settled.transaction : undefined
   const amount = typeof settled.amount === 'string' && /^\d{1,18}$/.test(settled.amount) ? settled.amount : undefined
   reserve(config, url.toString(), 0n, now())([{ at: now(), url: url.toString(), units: amount ?? '0', kind: 'refund', ...(transaction ? { transaction } : {}) }])
