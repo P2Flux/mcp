@@ -1,0 +1,25 @@
+# The remote MCP server (ChatGPT, claude.ai). Holds no keys and no state on disk: nothing to back up.
+[Unit]
+Description=P2Flux remote MCP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=p2flux-mcp
+WorkingDirectory=/opt/p2flux-mcp/current
+ExecStart=/usr/bin/node dist/remote.js
+Environment=P2FLUX_NETWORK=test
+Environment=P2FLUX_PUBLIC_URL=https://agent-test.p2flux.com
+Environment=P2FLUX_TRUST_PROXY=1
+Environment=P2FLUX_REMOTE_MAX_PRICE=5
+Environment=PORT=8787
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

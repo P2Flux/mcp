@@ -1,0 +1,22 @@
+# agent-test.p2flux.com -> the remote MCP server on 127.0.0.1:8787.
+# nginx APPENDS the address it sees to X-Forwarded-For; the server reads the last entry (P2FLUX_TRUST_PROXY=1).
+limit_req_zone $binary_remote_addr zone=p2flux_mcp:10m rate=5r/s;
+
+server {
+    listen 443 ssl http2;
+    server_name agent-test.p2flux.com;
+    # ssl_certificate / ssl_certificate_key: as for the API vhost
+
+    client_max_body_size 64k;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location / {
+        limit_req zone=p2flux_mcp burst=20 nodelay;
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering off;          # MCP answers may be streamed
+        proxy_read_timeout 120s;
+    }
+}
