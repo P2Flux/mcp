@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { Config } from './config.js'
 
@@ -11,6 +12,8 @@ export type Entry = {
   at: number
   url: string
   units: string
+  /** A reservation's own id: two reservations in one millisecond for one page are still two. */
+  id?: string
   /** exact: a transaction hash. prepaid: a deposit is 'deposit', a page paid from the balance 'voucher', unused balance taken back 'refund'. */
   kind: 'exact' | 'deposit' | 'voucher' | 'reserved' | 'refund'
   transaction?: string
@@ -47,10 +50,10 @@ export function refusal(config: Config, units: bigint, list: Entry[], now = Date
 /** Reserve before paying; returns a function that replaces the reservation with what happened. */
 export function reserve(config: Config, url: string, units: bigint, now = Date.now()) {
   const list = entries(config)
-  const reservation: Entry = { at: now, url, units: units.toString(), kind: 'reserved' }
+  const reservation: Entry = { at: now, url, units: units.toString(), kind: 'reserved', id: randomUUID() }
   save(config, [...list, reservation])
   return (outcome: Entry[] ) => {
-    const current = entries(config).filter((e) => !(e.kind === 'reserved' && e.at === reservation.at && e.url === url))
+    const current = entries(config).filter((e) => !(e.kind === 'reserved' && e.id === reservation.id))
     save(config, [...current, ...outcome])
   }
 }

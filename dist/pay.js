@@ -98,7 +98,14 @@ async function bodyOf(res) {
     }
     return Buffer.concat(chunks).toString('utf8');
 }
-const plain = (f, url) => f(url, { headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5' }, redirect: 'error' });
+const plain = (f, url) => f(url, { headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5' }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+/** Every request that carries a signed payment: never redirected (a payment must not follow a site
+ *  elsewhere), and a whole answer within 30 s. */
+const named = (f) => ((i, init) => {
+    const request = new Request(i, { ...init, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+    request.headers.set('user-agent', USER_AGENT);
+    return f(request);
+});
 /** What a URL costs. Pays nothing. */
 export async function checkPrice(config, input, f = fetch) {
     const url = checkedUrl(config, input);
@@ -155,12 +162,8 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
                 },
             }));
         }
-        const named = ((i, init) => {
-            const request = new Request(i, init);
-            request.headers.set('user-agent', USER_AGENT);
-            return f(request);
-        });
-        return wrapFetchWithPayment(named, client);
+        const signedFetch = named(f);
+        return wrapFetchWithPayment(signedFetch, client);
     };
     const transactionOf = (res) => {
         try {
@@ -237,14 +240,10 @@ export async function withdrawPrepaid(config, input, f = fetch, now = Date.now) 
     const url = checkedUrl(config, input);
     const signer = toClientEvmSigner(account(config), chainClient(config));
     const scheme = new BatchSettlementEvmScheme(signer, { storage: new FileClientChannelStorage({ directory: join(config.dir, 'channels') }) });
-    const named = ((i, init) => {
-        const request = new Request(i, init);
-        request.headers.set('user-agent', USER_AGENT);
-        return f(request);
-    });
+    const signedFetch = named(f);
     let settled;
     try {
-        settled = (await scheme.refund(url.toString(), { fetch: named }));
+        settled = (await scheme.refund(url.toString(), { fetch: signedFetch }));
     }
     catch (err) {
         const message = err.message;

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 const path = (config) => join(config.dir, 'spending.json');
 export function entries(config) {
@@ -29,10 +30,10 @@ export function refusal(config, units, list, now = Date.now()) {
 /** Reserve before paying; returns a function that replaces the reservation with what happened. */
 export function reserve(config, url, units, now = Date.now()) {
     const list = entries(config);
-    const reservation = { at: now, url, units: units.toString(), kind: 'reserved' };
+    const reservation = { at: now, url, units: units.toString(), kind: 'reserved', id: randomUUID() };
     save(config, [...list, reservation]);
     return (outcome) => {
-        const current = entries(config).filter((e) => !(e.kind === 'reserved' && e.at === reservation.at && e.url === url));
+        const current = entries(config).filter((e) => !(e.kind === 'reserved' && e.id === reservation.id));
         save(config, [...current, ...outcome]);
     };
 }

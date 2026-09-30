@@ -16,6 +16,8 @@ function readKey(config: Config): Hex {
   const path = keyPath(config)
   // A key other users of this machine can read is not a private key.
   if (process.platform !== 'win32' && (statSync(path).mode & 0o077) !== 0) chmodSync(path, 0o600)
+  // The folder too: it holds the channel records and the spending log next to the key.
+  if (process.platform !== 'win32' && (statSync(config.dir).mode & 0o077) !== 0) chmodSync(config.dir, 0o700)
   const key = readFileSync(path, 'utf8').trim()
   if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error(`the wallet file ${path} is damaged`)
   return key as Hex

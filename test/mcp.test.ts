@@ -220,3 +220,17 @@ test('tools: read_paid rejects a max_price that is not an amount', async () => {
   await assert.rejects(tools(c, site(null)).read_paid.run({ url: 'https://news.example/a', max_price: 'cheap' }), /not an amount/)
   assert.match(await tools(c, site(null)).read_paid.run({ url: 'https://news.example/a' }), /This page was free/)
 })
+
+test('hardening: endpoint overrides must be https; reservations are told apart by id; paid requests never follow a redirect', async () => {
+  assert.throws(() => cfg({ P2FLUX_API_URL: 'http://evil.example' }), /P2FLUX_API_URL must be an https address/)
+  assert.throws(() => cfg({ P2FLUX_RPC_URL: 'ftp://x' }), /P2FLUX_RPC_URL/)
+  assert.throws(() => cfg({ P2FLUX_API_URL: 'https://user:pw@api.example' }), /https address/)
+  assert.equal(cfg({ P2FLUX_API_URL: 'http://localhost:3000/' }).apiUrl, 'http://localhost:3000')
+  const c = cfg()
+  const a = reserve(c, 'https://x.test/', 10n, 5)
+  const b = reserve(c, 'https://x.test/', 20n, 5)
+  a([{ at: 5, url: 'https://x.test/', units: '10', kind: 'exact' }])
+  assert.deepEqual(entries(c).map((e) => e.kind).sort(), ['exact', 'reserved'], 'the other reservation is still counted')
+  b([])
+  assert.deepEqual(entries(c).map((e) => e.kind), ['exact'])
+})

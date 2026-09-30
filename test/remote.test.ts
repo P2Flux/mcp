@@ -150,9 +150,17 @@ test('requests expire, and an id that was never issued opens nothing', async () 
   await assert.rejects(w.remote.approve(r.id, auth(w)), /expired/)
 })
 
-test('net: only public addresses', () => {
-  for (const a of ['8.8.8.8', '93.184.216.34', '2606:4700:4700::1111']) assert.equal(isPublicAddress(a), true, a)
-  for (const a of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '224.0.0.1', 'not-an-ip', '']) assert.equal(isPublicAddress(a), false, a)
+test('net: only globally routable addresses - no IPv6 form that carries or reaches an IPv4 one', () => {
+  const PUBLIC = ['8.8.8.8', '93.184.216.34', '2606:4700:4700::1111', '2a00:1450:4001:82a::200e', '2001:4860:4860::8888']
+  const PRIVATE = [
+    '127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1', '255.255.255.255', '192.0.2.1', '198.51.100.7', '203.0.113.9',
+    '::', '::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '::ffff:10.0.0.1', '::127.0.0.1', '::7f00:1', '::a9fe:a9fe',
+    '64:ff9b::7f00:1', '64:ff9b::169.254.169.254', '2002:7f00:1::1', '2002:c0a8:101::', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '2001:db8::1',
+    'fd00::1', 'fc00::1', 'fe80::1', 'fe80::1%eth0', 'fec0::1', 'ff02::1', '100::1', '3fff::1', '4000::1',
+    'not-an-ip', '', '1.2.3', '::ffff:999.1.1.1', '1:2:3:4:5:6:7:8:9', ':::1',
+  ]
+  for (const a of PUBLIC) assert.equal(isPublicAddress(a), true, a)
+  for (const a of PRIVATE) assert.equal(isPublicAddress(a), false, a)
 })
 
 test('net: http, credentials, odd ports and names that resolve to a private address are refused before any connection', async () => {
@@ -185,4 +193,11 @@ test('approve: a signature refused by the wallet check leaves the request open f
   const r = await opened(w)
   await assert.rejects(w.remote.approve(r.id, auth(w)), /not valid/)
   assert.equal(w.remote.result(r.id).state, 'waiting')
+})
+
+test('request: one caller cannot hold more than 20 waiting requests - a flood from one address cannot push out everyone else', async () => {
+  const w = world()
+  for (let i = 0; i < 20; i++) await w.remote.request(URL_, undefined, '203.0.113.9')
+  await assert.rejects(w.remote.request(URL_, undefined, '203.0.113.9'), /too many payment requests/)
+  assert.equal((await w.remote.request(URL_, undefined, '198.51.100.7')).free, false, 'another caller is not affected')
 })

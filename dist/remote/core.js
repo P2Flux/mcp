@@ -16,7 +16,9 @@ import { MAX_TEXT, offersFrom, toText } from '../pay.js';
  */
 const USER_AGENT = 'P2Flux-MCP/0.2 (remote; +https://p2flux.com)';
 const TTL_MS = 15 * 60_000;
-const MAX_OPEN = 5_000;
+const MAX_OPEN = 1_000;
+/** Open requests one caller (one network address) may hold: a flood from one place cannot push out everyone else's. */
+const MAX_OPEN_PER_OWNER = 20;
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 export function createRemote(deps) {
@@ -72,7 +74,7 @@ export function createRemote(deps) {
             return o.free ? 'This page is free to read.' : `This page costs ${fromUnits(o.units)} USDC.`;
         },
         /** Open a payment request for the person to approve. */
-        async request(url, maxPrice) {
+        async request(url, maxPrice, owner = '') {
             const max = maxPrice === undefined || maxPrice === '' ? null : toUnits(maxPrice);
             if (maxPrice && max === null)
                 throw new Error(`max_price "${maxPrice}" is not an amount like 0.10`);
@@ -80,8 +82,14 @@ export function createRemote(deps) {
             if (o.free)
                 return { free: true };
             sweep();
+            let mine = 0;
+            for (const p of open.values())
+                if (p.owner === owner && p.state === 'waiting')
+                    mine++;
+            if (mine >= MAX_OPEN_PER_OWNER)
+                throw new Error('too many payment requests are waiting for approval; approve or let some expire (15 minutes) first');
             const id = randomBytes(16).toString('hex');
-            open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, state: 'waiting', created: now() });
+            open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, state: 'waiting', created: now(), owner });
             return { free: false, id, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units) };
         },
         /** What the approval page shows and asks the wallet to sign. Nothing here is secret. */

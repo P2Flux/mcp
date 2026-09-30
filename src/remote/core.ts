@@ -18,7 +18,9 @@ import type { Fetched } from './net.js'
  */
 const USER_AGENT = 'P2Flux-MCP/0.2 (remote; +https://p2flux.com)'
 const TTL_MS = 15 * 60_000
-const MAX_OPEN = 5_000
+const MAX_OPEN = 1_000
+/** Open requests one caller (one network address) may hold: a flood from one place cannot push out everyone else's. */
+const MAX_OPEN_PER_OWNER = 20
 
 type Requirement = { scheme: string; network: string; asset: string; amount: string; payTo: string; maxTimeoutSeconds?: number; extra?: { name?: unknown; version?: unknown; p2flux?: { recipient?: unknown } } }
 type Pending = {
@@ -29,6 +31,7 @@ type Pending = {
   resource: unknown
   state: 'waiting' | 'paying' | 'paid' | 'failed'
   created: number
+  owner: string
   text?: string
   transaction?: string
   error?: string
@@ -96,14 +99,17 @@ export function createRemote(deps: RemoteDeps) {
     },
 
     /** Open a payment request for the person to approve. */
-    async request(url: string, maxPrice: string | undefined) {
+    async request(url: string, maxPrice: string | undefined, owner = '') {
       const max = maxPrice === undefined || maxPrice === '' ? null : toUnits(maxPrice)
       if (maxPrice && max === null) throw new Error(`max_price "${maxPrice}" is not an amount like 0.10`)
       const o = await offerOf(url, max)
       if (o.free) return { free: true as const }
       sweep()
+      let mine = 0
+      for (const p of open.values()) if (p.owner === owner && p.state === 'waiting') mine++
+      if (mine >= MAX_OPEN_PER_OWNER) throw new Error('too many payment requests are waiting for approval; approve or let some expire (15 minutes) first')
       const id = randomBytes(16).toString('hex')
-      open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, state: 'waiting', created: now() })
+      open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, state: 'waiting', created: now(), owner })
       return { free: false as const, id, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units) }
     },
 

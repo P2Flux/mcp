@@ -20,6 +20,21 @@ const NETWORKS = {
 
 export type Config = ReturnType<typeof loadConfig>
 
+/** An override of where the wallet talks to: https, or plain http to this machine only. Anything else is an error, never ignored. */
+function endpoint(name: string, raw: string | undefined): string | null {
+  const value = (raw ?? '').trim().replace(/\/$/, '')
+  if (!value) return null
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`${name} is not an address: "${value}"`)
+  }
+  const local = url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+  if ((url.protocol !== 'https:' && !local) || url.username || url.password) throw new Error(`${name} must be an https address (or http://localhost): "${value}"`)
+  return value
+}
+
 /**
  * Everything comes from the environment (the desktop extension fills it from its settings form).
  * A limit that cannot be read is an error, never "no limit".
@@ -41,7 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     perDay,
     /** The most one prepaid deposit may be. 0 switches prepaid off: every page is paid on its own. */
     maxPrepaid: (env.P2FLUX_MAX_PREPAID ?? '').trim() === '0' ? 0n : limit('P2FLUX_MAX_PREPAID', '1', '100'),
-    rpcUrl: (env.P2FLUX_RPC_URL ?? '').trim() || undefined,
-    apiUrl: (env.P2FLUX_API_URL ?? '').trim() || network.api,
+    rpcUrl: endpoint('P2FLUX_RPC_URL', env.P2FLUX_RPC_URL) ?? undefined,
+    apiUrl: endpoint('P2FLUX_API_URL', env.P2FLUX_API_URL) ?? network.api,
   }
 }

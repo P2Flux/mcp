@@ -98,7 +98,16 @@ async function bodyOf(res: Response): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-const plain = (f: Fetch, url: URL) => f(url, { headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5' }, redirect: 'error' })
+const plain = (f: Fetch, url: URL) => f(url, { headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5' }, redirect: 'error', signal: AbortSignal.timeout(30_000) })
+
+/** Every request that carries a signed payment: never redirected (a payment must not follow a site
+ *  elsewhere), and a whole answer within 30 s. */
+const named = (f: Fetch): Fetch =>
+  ((i: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(i, { ...init, redirect: 'error', signal: AbortSignal.timeout(30_000) })
+    request.headers.set('user-agent', USER_AGENT)
+    return f(request)
+  }) as Fetch
 
 export type Price = { free: true } | { free: false; price: string; prepaid: boolean; offers: Offer[] }
 
@@ -159,12 +168,8 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
         }),
       )
     }
-    const named = ((i: RequestInfo | URL, init?: RequestInit) => {
-      const request = new Request(i, init)
-      request.headers.set('user-agent', USER_AGENT)
-      return f(request)
-    }) as Fetch
-    return wrapFetchWithPayment(named, client)
+    const signedFetch = named(f)
+    return wrapFetchWithPayment(signedFetch, client)
   }
   const transactionOf = (res: Response): string | undefined => {
     try {
@@ -237,14 +242,10 @@ export async function withdrawPrepaid(config: Config, input: string, f: Fetch = 
   const url = checkedUrl(config, input)
   const signer = toClientEvmSigner(account(config), chainClient(config) as never)
   const scheme = new BatchSettlementEvmScheme(signer, { storage: new FileClientChannelStorage({ directory: join(config.dir, 'channels') }) })
-  const named = ((i: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(i, init)
-    request.headers.set('user-agent', USER_AGENT)
-    return f(request)
-  }) as Fetch
+  const signedFetch = named(f)
   let settled: { success?: boolean; transaction?: string; amount?: string; errorReason?: string }
   try {
-    settled = (await scheme.refund(url.toString(), { fetch: named })) as typeof settled
+    settled = (await scheme.refund(url.toString(), { fetch: signedFetch })) as typeof settled
   } catch (err) {
     const message = (err as Error).message
     if (/refund_too_early/.test(message)) throw new Error('this balance was barely used, so it is returned after 24 hours without use - ask again tomorrow. It stays yours meanwhile.')
