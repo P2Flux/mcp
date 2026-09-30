@@ -1,0 +1,21 @@
+# A paid test page (Base Sepolia, test money). No keys, no state.
+[Unit]
+Description=P2Flux paid test page
+After=network-online.target
+
+[Service]
+User=p2flux-mcp
+WorkingDirectory=/opt/p2flux-demo
+ExecStart=/usr/bin/node server.mjs
+Environment=PORT=8788
+Environment=PUBLIC_URL=https://agent-test.p2flux.com
+EnvironmentFile=/etc/p2flux-demo.env
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target
