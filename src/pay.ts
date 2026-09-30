@@ -18,7 +18,7 @@ import { account, chainClient } from './wallet.js'
  *   - money that may leave is written down first, so a crash cannot forget it.
  */
 
-const USER_AGENT = 'P2Flux-MCP/0.1 (+https://p2flux.com)'
+const USER_AGENT = 'P2Flux-MCP/0.2 (+https://p2flux.com)'
 const MAX_BODY = 2 * 1024 * 1024
 export const MAX_TEXT = 60_000
 

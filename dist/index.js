@@ -8,7 +8,7 @@ import { tools } from './tools.js';
  * owner's limits enforced here, in code. stdio only - it runs on the owner's computer, next to the key.
  */
 const config = loadConfig();
-const server = new McpServer({ name: 'p2flux', version: '0.1.0' });
+const server = new McpServer({ name: 'p2flux', version: '0.2.0' });
 for (const [name, tool] of Object.entries(tools(config))) {
     server.registerTool(name, { description: tool.description, inputSchema: tool.input }, (async (args) => {
         try {

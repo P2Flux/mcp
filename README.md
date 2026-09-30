@@ -42,8 +42,8 @@ claude mcp add p2flux -e P2FLUX_NETWORK=test -- npx -y @p2flux/mcp
   site back"*), and on its own after a week without use when it is 0.50 USDC or more.
 - The key is in one file only you can read. It is never sent anywhere and is shown only if you ask
   Claude to export it, with an exact confirmation sentence.
-- It cannot be used from ChatGPT or the claude.ai website: those accept only servers that run on
-  someone else's computer, which would mean someone else holding your key.
+- ChatGPT and the claude.ai website cannot run a program on your computer. For them there is the
+  remote server below: no wallet is kept anywhere; you approve each payment in your own browser wallet.
 
 ## Development
 
@@ -53,3 +53,27 @@ npm run build
 node test/live.mjs               # live on Base Sepolia (see the file)
 npx @anthropic-ai/mcpb pack . p2flux.mcpb
 ```
+
+## ChatGPT and claude.ai (remote server)
+
+`p2flux-mcp-remote` is the same idea for assistants that only connect to servers on the internet. It
+holds **no wallet, no balance and no history**, and needs no login. Tools: `find_paid_content`,
+`check_price`, `request_paid_page`, `get_paid_page`.
+
+1. The assistant asks for a paid page. It gets a link, and shows it to you.
+2. You open the link. The page shows the amount, the page and the seller's address. You approve in
+   your own wallet (Coinbase Wallet, MetaMask…): one signature for exactly that amount, no network fee.
+3. The page is paid and fetched at once; the assistant reads it.
+
+Only sites paid through P2Flux can be paid, only in USDC on Base, and never more than
+`P2FLUX_REMOTE_MAX_PRICE` (default 5 USDC). The server reads only public https websites.
+
+```bash
+P2FLUX_PUBLIC_URL=https://agent.example.com P2FLUX_NETWORK=test PORT=8787 npx -p @p2flux/mcp p2flux-mcp-remote
+```
+
+Put it behind https (nginx) with `P2FLUX_TRUST_PROXY=1`, then add `https://agent.example.com/mcp` as a
+custom connector in claude.ai or ChatGPT (developer mode), authentication: none.
+
+Limits today: a browser wallet extension is needed (no WalletConnect / phone wallets yet); one
+approval per page (no prepaid balance).

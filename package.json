@@ -1,10 +1,10 @@
 {
   "name": "@p2flux/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Let your AI assistant find and pay for web content with USDC (x402), within limits you set. The wallet stays on your computer.",
   "license": "MIT",
   "type": "module",
-  "bin": { "p2flux-mcp": "./dist/index.js" },
+  "bin": { "p2flux-mcp": "./dist/index.js", "p2flux-mcp-remote": "./dist/remote.js" },
   "main": "./dist/index.js",
   "files": ["dist", "README.md", "SKILL.md", "manifest.json"],
   "engines": { "node": ">=20" },
