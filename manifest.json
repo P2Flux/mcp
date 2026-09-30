@@ -1,0 +1,41 @@
+{
+  "manifest_version": "0.2",
+  "name": "p2flux",
+  "display_name": "P2Flux - pay for web content",
+  "version": "0.1.0",
+  "description": "Let Claude find and pay for web pages that sell to AI agents, in USDC, within limits you set. The wallet stays on your computer.",
+  "long_description": "Some websites ask AI assistants to pay a few cents to read an article or use their data (the open x402 standard). This extension gives Claude a small wallet on your computer and lets it pay those sites for you - never more than the limits you set here. P2Flux never holds your money or your key. Start by asking Claude: \"Set up my P2Flux wallet.\"",
+  "author": { "name": "P2Flux", "url": "https://p2flux.com" },
+  "homepage": "https://p2flux.com",
+  "license": "MIT",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "P2FLUX_NETWORK": "${user_config.network}",
+        "P2FLUX_MAX_PER_PAYMENT": "${user_config.max_per_payment}",
+        "P2FLUX_MAX_PER_DAY": "${user_config.max_per_day}",
+        "P2FLUX_MAX_PREPAID": "${user_config.max_prepaid}"
+      }
+    }
+  },
+  "user_config": {
+    "network": { "type": "string", "title": "Money", "description": "\"test\" = practice with free test money (recommended first). \"live\" = real USDC on Base.", "default": "test", "required": true },
+    "max_per_payment": { "type": "string", "title": "Most to pay for one page (USDC)", "description": "Claude never pays more than this for a single page.", "default": "0.50", "required": true },
+    "max_per_day": { "type": "string", "title": "Most to spend in a day (USDC)", "description": "Everything that leaves the wallet in 24 hours, together.", "default": "5", "required": true },
+    "max_prepaid": { "type": "string", "title": "Prepaid balance per site (USDC, 0 = off)", "description": "Some sites let Claude put a small amount aside once and then read pages without a fee each time. This is the most that may be put aside at one site.", "default": "1", "required": true }
+  },
+  "tools": [
+    { "name": "wallet_setup", "description": "Create the wallet and show how to add money" },
+    { "name": "wallet_balance", "description": "Balance, today's spending, limits" },
+    { "name": "find_paid_content", "description": "Search sites that sell to AI agents" },
+    { "name": "check_price", "description": "What a page costs, without paying" },
+    { "name": "read_paid", "description": "Read a page, paying within the limits" },
+    { "name": "spending_report", "description": "What was paid, when, where" },
+    { "name": "export_wallet_key", "description": "Reveal the wallet key (explicit confirmation)" }
+  ],
+  "compatibility": { "platforms": ["darwin", "win32", "linux"], "runtimes": { "node": ">=20.0.0" } }
+}
