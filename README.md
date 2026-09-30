@@ -39,7 +39,8 @@ claude mcp add p2flux -e P2FLUX_NETWORK=test -- npx -y @p2flux/mcp
   changes the price between the check and the payment gets nothing.
 - Keeps a spending log on your computer; the daily limit survives restarts.
 - Money put aside at a site and not used comes back when you ask (*"take my unused balance at that
-  site back"*), and on its own after a week without use when it is 0.50 USDC or more.
+  site back"*) once 0.10 USDC of it was used or after a day without use, and on its own after a week
+  without use when it is 0.50 USDC or more.
 - The key is in one file only you can read. It is never sent anywhere, and no tool can reveal it -
   so nothing an assistant reads on the web can talk it into giving the key away. To move the wallet
   elsewhere, run `npx -p @p2flux/mcp p2flux-mcp export-key` in a terminal yourself.
