@@ -9,6 +9,15 @@ import { tools } from './tools.js'
  * owner's limits enforced here, in code. stdio only - it runs on the owner's computer, next to the key.
  */
 const config = loadConfig()
+
+/* The key leaves the machine only by the owner's own hand, in a terminal - never through a tool an
+ * assistant can call, whatever a web page tells it. */
+if (process.argv[2] === 'export-key') {
+  const { exportKey } = await import('./wallet.js')
+  process.stdout.write(`${exportKey(config)}\n`)
+  process.exit(0)
+}
+
 const server = new McpServer({ name: 'p2flux', version: '0.2.0' })
 
 for (const [name, tool] of Object.entries(tools(config))) {

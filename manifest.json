@@ -35,8 +35,7 @@
     { "name": "check_price", "description": "What a page costs, without paying" },
     { "name": "read_paid", "description": "Read a page, paying within the limits" },
     { "name": "withdraw_prepaid", "description": "Take an unused prepaid balance back into the wallet" },
-    { "name": "spending_report", "description": "What was paid, when, where" },
-    { "name": "export_wallet_key", "description": "Reveal the wallet key (explicit confirmation)" }
+    { "name": "spending_report", "description": "What was paid, when, where" }
   ],
   "compatibility": { "platforms": ["darwin", "win32", "linux"], "runtimes": { "node": ">=20.0.0" } }
 }

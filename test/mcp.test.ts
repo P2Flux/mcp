@@ -4,6 +4,7 @@
  * Sepolia (test/live.mjs).
  */
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ import { test } from 'node:test'
 import { fromUnits, loadConfig, toUnits } from '../src/config.js'
 import { entries, refusal, reserve, spentToday } from '../src/ledger.js'
 import { checkPrice, checkedUrl, offersFrom, readPaid, toText } from '../src/pay.js'
-import { EXPORT_PHRASE, tools } from '../src/tools.js'
+import { tools } from '../src/tools.js'
 import { account, walletExists } from '../src/wallet.js'
 
 const cfg = (env: Record<string, string> = {}) => loadConfig({ P2FLUX_MCP_DIR: mkdtempSync(join(tmpdir(), 'p2flux-mcp-')), ...env } as never)
@@ -186,7 +187,7 @@ test('BAIT AND SWITCH: a site that shows 0.05 and then asks the paying request f
 
 // --- the tools -----------------------------------------------------------------------------------------------
 
-test('tools: the key is revealed only with the exact phrase; wallet_setup never shows it', async () => {
+test('tools: no tool can reveal the key - text a page feeds the assistant cannot ask for it; the owner uses the CLI', async () => {
   const c = cfg()
   const t = tools(c, site(null))
   const setup = await t.wallet_setup.run()
@@ -194,10 +195,12 @@ test('tools: the key is revealed only with the exact phrase; wallet_setup never 
   assert.match(setup, /faucet.circle.com/)
   const key = readFileSync(join(c.dir, 'wallet.key'), 'utf8').trim()
   assert.equal(setup.includes(key), false)
-  await assert.rejects(t.export_wallet_key.run({ confirm: 'yes' }), /Not revealed/)
-  await assert.rejects(t.export_wallet_key.run({ confirm: EXPORT_PHRASE.toLowerCase() }), /Not revealed/)
-  assert.equal((await t.export_wallet_key.run({ confirm: EXPORT_PHRASE })).includes(key), true)
+  assert.equal(Object.keys(t).some((name) => /export|key/i.test(name)), false)
+  for (const tool of Object.values(t)) assert.doesNotMatch(tool.description, /private key/i)
   assert.match(await t.spending_report.run(), /Nothing was paid yet/)
+  // The CLI, run by the owner in a terminal, prints it - and only with the flag.
+  const cli = spawnSync('node', ['--import', 'tsx', 'src/index.ts', 'export-key'], { env: { ...process.env, P2FLUX_MCP_DIR: c.dir, P2FLUX_NETWORK: 'test' }, encoding: 'utf8', timeout: 30_000 })
+  assert.equal(cli.stdout.trim(), key)
 })
 
 test('tools: directory results are labelled as untrusted, clipped and flattened', async () => {

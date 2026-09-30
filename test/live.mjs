@@ -41,7 +41,7 @@ const check = (name, ok, detail) => { results.push(ok); console.log(`${ok ? 'PAS
 // --- pay per page --------------------------------------------------------------------------------
 let s = await connect({ P2FLUX_MAX_PREPAID: '0', P2FLUX_MAX_PER_DAY: '2' })
 const listed = (await s.client.listTools()).tools.map((t) => t.name).sort()
-check('1  the server lists its eight tools', listed.join() === 'check_price,export_wallet_key,find_paid_content,read_paid,spending_report,wallet_balance,wallet_setup,withdraw_prepaid', listed.join())
+check('1  the server lists its seven tools, none of which can reveal the key', listed.join() === 'check_price,find_paid_content,read_paid,spending_report,wallet_balance,wallet_setup,withdraw_prepaid', listed.join())
 const setup = await s.call('wallet_setup')
 const address = /Address: (0x[0-9a-fA-F]{40})/.exec(setup.text)?.[1]
 check('2  wallet_setup creates a wallet and explains funding; the key is not shown', !!address && /faucet/.test(setup.text) && !/0x[0-9a-fA-F]{64}/.test(setup.text), address)

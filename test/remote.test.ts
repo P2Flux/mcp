@@ -168,3 +168,21 @@ test('net: http, credentials, odd ports and names that resolve to a private addr
   await assert.rejects(publicFetch('https://169.254.169.254/latest/meta-data', {}, false, async (h) => [h]), /not a public website/)
   await assert.rejects(publicFetch('https://nowhere.example/', {}, false, async () => []), /not a public website/)
 })
+
+test('approve: two approvals of one request at the same moment - one payment is sent, the other is told to wait', async () => {
+  const w = world()
+  const r = await opened(w)
+  const both = await Promise.allSettled([w.remote.approve(r.id, auth(w)), w.remote.approve(r.id, auth(w, { nonce: `0x${'ef'.repeat(32)}` }))])
+  assert.deepEqual(both.map((b) => b.status).sort(), ['fulfilled', 'rejected'])
+  const refused = both.find((b) => b.status === 'rejected') as PromiseRejectedResult
+  assert.match(String(refused.reason), /being made|already paid/)
+  assert.equal(w.calls.filter((c) => c.headers['payment-signature']).length, 1, 'exactly one payment reached the site')
+  assert.equal(w.remote.result(r.id).state, 'paid')
+})
+
+test('approve: a signature refused by the wallet check leaves the request open for another try', async () => {
+  const w = world({ valid: false })
+  const r = await opened(w)
+  await assert.rejects(w.remote.approve(r.id, auth(w)), /not valid/)
+  assert.equal(w.remote.result(r.id).state, 'waiting')
+})

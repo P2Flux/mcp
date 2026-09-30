@@ -40,8 +40,9 @@ claude mcp add p2flux -e P2FLUX_NETWORK=test -- npx -y @p2flux/mcp
 - Keeps a spending log on your computer; the daily limit survives restarts.
 - Money put aside at a site and not used comes back when you ask (*"take my unused balance at that
   site back"*), and on its own after a week without use when it is 0.50 USDC or more.
-- The key is in one file only you can read. It is never sent anywhere and is shown only if you ask
-  Claude to export it, with an exact confirmation sentence.
+- The key is in one file only you can read. It is never sent anywhere, and no tool can reveal it -
+  so nothing an assistant reads on the web can talk it into giving the key away. To move the wallet
+  elsewhere, run `npx -p @p2flux/mcp p2flux-mcp export-key` in a terminal yourself.
 - ChatGPT and the claude.ai website cannot run a program on your computer. For them there is the
   remote server below: no wallet is kept anywhere; you approve each payment in your own browser wallet.
 

@@ -128,7 +128,7 @@ export function createRemote(deps: RemoteDeps) {
     /** The person's signature. It must authorize exactly what was shown; then the page is paid and fetched at once. */
     async approve(id: string, input: { signature?: unknown; authorization?: Partial<Authorization> }) {
       const p = get(id)
-      if (p.state !== 'waiting') throw new Error(p.state === 'paid' ? 'this page is already paid' : 'this request is closed')
+      if (p.state !== 'waiting') throw new Error(p.state === 'paid' ? 'this page is already paid' : p.state === 'paying' ? 'this payment is being made; wait for it' : 'this request is closed')
       const a = input.authorization ?? {}
       const signature = input.signature
       const seconds = Math.floor(now() / 1000)
@@ -141,9 +141,13 @@ export function createRemote(deps: RemoteDeps) {
         typeof a.nonce !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(a.nonce)
       ) throw new Error('the signature is not for the payment that was shown')
       const authorization = a as Authorization
-      if (!(await deps.verifySignature(p, authorization, signature).catch(() => false))) throw new Error('the signature is not valid for this wallet')
-
+      // Taken before anything is awaited: a second approval arriving meanwhile finds it closed.
       p.state = 'paying'
+      if (!(await deps.verifySignature(p, authorization, signature).catch(() => false))) {
+        p.state = 'waiting'
+        throw new Error('the signature is not valid for this wallet')
+      }
+
       const payment = Buffer.from(JSON.stringify({ x402Version: 2, accepted: p.requirement, payload: { signature, authorization }, resource: p.resource })).toString('base64')
       let res: Fetched
       try {
