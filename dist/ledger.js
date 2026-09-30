@@ -17,7 +17,7 @@ function save(config, list) {
 }
 const DAY_MS = 86_400_000;
 /** Money that left the wallet in the last 24 hours: payments and prepaid deposits, not vouchers (those spend a deposit already counted). */
-export const spentToday = (list, now = Date.now()) => list.filter((e) => now - e.at < DAY_MS && e.kind !== 'voucher').reduce((sum, e) => sum + BigInt(e.units), 0n);
+export const spentToday = (list, now = Date.now()) => list.filter((e) => now - e.at < DAY_MS && e.kind !== 'voucher' && e.kind !== 'refund').reduce((sum, e) => sum + BigInt(e.units), 0n);
 /** Why `units` may not leave the wallet now, or null. */
 export function refusal(config, units, list, now = Date.now()) {
     if (units > config.perPayment && units > config.maxPrepaid)

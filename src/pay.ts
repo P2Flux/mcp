@@ -227,3 +227,30 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
   if (!res.ok) throw new Error(`paid ${fromUnits(price)} USDC, but the site answered HTTP ${res.status}`)
   return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(price), how: 'per page', ...(transaction ? { transaction } : {}) }
 }
+
+/**
+ * Take the unused prepaid balance for a site back into the wallet. The site is asked to return it
+ * (the official cooperative refund): nothing is paid, and the money can only go to this wallet - the
+ * escrow contract refunds a channel to its payer and to nobody else.
+ */
+export async function withdrawPrepaid(config: Config, input: string, f: Fetch = fetch, now: () => number = Date.now): Promise<{ transaction?: string; amount?: string }> {
+  const url = checkedUrl(config, input)
+  const signer = toClientEvmSigner(account(config), chainClient(config) as never)
+  const scheme = new BatchSettlementEvmScheme(signer, { storage: new FileClientChannelStorage({ directory: join(config.dir, 'channels') }) })
+  const named = ((i: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(i, init)
+    request.headers.set('user-agent', USER_AGENT)
+    return f(request)
+  }) as Fetch
+  let settled: { success?: boolean; transaction?: string; amount?: string; errorReason?: string }
+  try {
+    settled = (await scheme.refund(url.toString(), { fetch: named })) as typeof settled
+  } catch (err) {
+    throw new Error(`the prepaid balance could not be taken back: ${(err as Error).message}. It stays yours: the site returns balances idle for a week on its own.`)
+  }
+  if (!settled.success) throw new Error(`the site did not return the balance (${settled.errorReason ?? 'no reason given'}). It stays yours: the site returns balances idle for a week on its own.`)
+  const transaction = typeof settled.transaction === 'string' && /^0x[0-9a-fA-F]{64}$/.test(settled.transaction) ? settled.transaction : undefined
+  const amount = typeof settled.amount === 'string' && /^\d{1,18}$/.test(settled.amount) ? settled.amount : undefined
+  reserve(config, url.toString(), 0n, now())([{ at: now(), url: url.toString(), units: amount ?? '0', kind: 'refund', ...(transaction ? { transaction } : {}) }])
+  return { ...(transaction ? { transaction } : {}), ...(amount ? { amount: fromUnits(BigInt(amount)) } : {}) }
+}

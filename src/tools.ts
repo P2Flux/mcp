@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { fromUnits, toUnits, type Config } from './config.js'
 import { entries, spentToday } from './ledger.js'
-import { checkPrice, readPaid } from './pay.js'
+import { checkPrice, readPaid, withdrawPrepaid } from './pay.js'
 import { account, exportKey, usdcBalance, walletExists } from './wallet.js'
 
 /**
@@ -96,14 +96,22 @@ export function tools(config: Config, f: Fetch = fetch) {
         return [receipt, UNTRUSTED, '---', r.text].join('\n')
       },
     },
+    withdraw_prepaid: {
+      description: 'Take the unused prepaid balance for a website back into the wallet. Costs nothing. Use when the user is done with a site that was paid from a prepaid balance.',
+      input: { url: z.string().max(2048).describe('Any paid page of that site that was read before (https).') },
+      run: async ({ url }: { url: string }) => {
+        const r = await withdrawPrepaid(config, url, f)
+        return `The unused prepaid balance${r.amount ? ` (${r.amount} USDC)` : ''} is back in the wallet.` + (r.transaction ? ` Transaction: ${config.network.explorer}/tx/${r.transaction}` : '')
+      },
+    },
     spending_report: {
       description: 'List what the wallet paid for: when, which page, how much.',
       input: {},
       run: async () => {
         const list = entries(config).filter((e) => e.kind !== 'reserved')
         if (!list.length) return 'Nothing was paid yet.'
-        const total = list.filter((e) => e.kind !== 'voucher').reduce((s, e) => s + BigInt(e.units), 0n)
-        const label = { exact: 'paid', deposit: 'prepaid deposit', voucher: 'from prepaid balance', reserved: '' }
+        const total = list.filter((e) => e.kind !== 'voucher' && e.kind !== 'refund').reduce((s, e) => s + BigInt(e.units), 0n)
+        const label = { exact: 'paid', deposit: 'prepaid deposit', voucher: 'from prepaid balance', refund: 'prepaid balance returned to the wallet', reserved: '' }
         return [
           `Total that left the wallet: ${fromUnits(total)} USDC. Last 24 hours: ${fromUnits(spentToday(entries(config)))} USDC.`,
           ...list.slice(-50).reverse().map((e) => `${new Date(e.at).toISOString().slice(0, 16).replace('T', ' ')}  ${fromUnits(BigInt(e.units))} USDC  ${label[e.kind]}  ${e.url}`),

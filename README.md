@@ -38,6 +38,8 @@ claude mcp add p2flux -e P2FLUX_NETWORK=test -- npx -y @p2flux/mcp
 - Checks the price against your limits **before** signing, and signs exactly that price. A site that
   changes the price between the check and the payment gets nothing.
 - Keeps a spending log on your computer; the daily limit survives restarts.
+- Money put aside at a site and not used comes back when you ask (*"take my unused balance at that
+  site back"*), and on its own after a week without use when it is 0.50 USDC or more.
 - The key is in one file only you can read. It is never sent anywhere and is shown only if you ask
   Claude to export it, with an exact confirmation sentence.
 - It cannot be used from ChatGPT or the claude.ai website: those accept only servers that run on

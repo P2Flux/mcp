@@ -11,8 +11,8 @@ export type Entry = {
   at: number
   url: string
   units: string
-  /** exact: a transaction hash. prepaid: a deposit is 'deposit', a page paid from the balance 'voucher'. */
-  kind: 'exact' | 'deposit' | 'voucher' | 'reserved'
+  /** exact: a transaction hash. prepaid: a deposit is 'deposit', a page paid from the balance 'voucher', unused balance taken back 'refund'. */
+  kind: 'exact' | 'deposit' | 'voucher' | 'reserved' | 'refund'
   transaction?: string
 }
 
@@ -35,7 +35,7 @@ function save(config: Config, list: Entry[]) {
 const DAY_MS = 86_400_000
 /** Money that left the wallet in the last 24 hours: payments and prepaid deposits, not vouchers (those spend a deposit already counted). */
 export const spentToday = (list: Entry[], now = Date.now()): bigint =>
-  list.filter((e) => now - e.at < DAY_MS && e.kind !== 'voucher').reduce((sum, e) => sum + BigInt(e.units), 0n)
+  list.filter((e) => now - e.at < DAY_MS && e.kind !== 'voucher' && e.kind !== 'refund').reduce((sum, e) => sum + BigInt(e.units), 0n)
 
 /** Why `units` may not leave the wallet now, or null. */
 export function refusal(config: Config, units: bigint, list: Entry[], now = Date.now()): string | null {
