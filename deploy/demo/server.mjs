@@ -1,15 +1,18 @@
-// A paid test page for trying P2Flux with an AI assistant. Test money only (Base Sepolia).
-// People read it free; AI agents are asked to pay 0.05 test USDC (x402), settled by api-test.
+// A paid test page for trying P2Flux with an AI assistant. People read it free; AI agents are asked
+// to pay 0.05 USDC (x402). API_URL picks the network: api-test (Base Sepolia, test money, default)
+// or api.p2flux.com (Base, real USDC).
 import { createServer } from 'node:http'
 import { createPaywall } from './paywall.js'
 
 const PORT = Number(process.env.PORT) || 8788
 const BASE = process.env.PUBLIC_URL || 'https://agent-test.p2flux.com'
-const paywall = createPaywall({ apiUrl: 'https://api-test.p2flux.com', recipient: process.env.RECIPIENT, price: '0.05', agentsOnly: true, prepaid: false })
+const API = process.env.API_URL || 'https://api-test.p2flux.com'
+const LIVE = API === 'https://api.p2flux.com'
+const paywall = createPaywall({ apiUrl: API, recipient: process.env.RECIPIENT, price: '0.05', agentsOnly: true, prepaid: false })
 
 const page = (title, body) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
 <style>body{font:17px/1.6 system-ui,sans-serif;max-width:40rem;margin:6vh auto;padding:0 1rem;color:#14171f}small{color:#5b6472}</style></head>
-<body><h1>${title}</h1>${body}<p><small>A P2Flux test page on Base Sepolia. AI agents pay 0.05 test USDC to read it; nothing here is real money.</small></p></body></html>`
+<body><h1>${title}</h1>${body}<p><small>${LIVE ? 'A P2Flux demo page on Base. AI agents pay 0.05 USDC (real money) to read it; people read it free.' : 'A P2Flux test page on Base Sepolia. AI agents pay 0.05 test USDC to read it; nothing here is real money.'}</small></p></body></html>`
 
 const ARTICLES = {
   '/demo/': ['P2Flux test page', `<p>This is a free index. Paid page: <a href="${BASE}/demo/fish-soup">Fish soup with saffron</a>.</p>`],
