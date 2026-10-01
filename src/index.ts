@@ -18,7 +18,7 @@ if (process.argv[2] === 'export-key') {
   process.exit(0)
 }
 
-const server = new McpServer({ name: 'p2flux', version: '0.2.0' })
+const server = new McpServer({ name: 'p2flux', version: '0.3.0' })
 
 for (const [name, tool] of Object.entries(tools(config))) {
   server.registerTool(name, { description: tool.description, inputSchema: tool.input }, (async (args: Record<string, unknown>) => {

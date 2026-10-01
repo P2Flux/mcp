@@ -78,7 +78,8 @@ export function tools(config: Config, f: Fetch = fetch) {
       input: { url: z.string().max(2048).describe('The page address (https).') },
       run: async ({ url }: { url: string }) => {
         const p = await checkPrice(config, url, f)
-        return p.free ? 'This page is free to read.' : `This page costs ${p.price} USDC.${p.prepaid ? ' It can also be paid from a prepaid balance.' : ''}`
+        if (p.free) return 'This page is free to read.'
+        return `This page costs ${p.price} USDC.${p.prepaid ? ' It can also be paid from a prepaid balance.' : ''}` + (p.says ? `\nThe site says what it buys (the site's own words): "${p.says}"` : '')
       },
     },
     read_paid: {
@@ -92,10 +93,11 @@ export function tools(config: Config, f: Fetch = fetch) {
         if (max_price && max === null) throw new Error(`max_price "${max_price}" is not an amount like 0.10`)
         const r = await readPaid(config, url, max, f)
         const receipt =
-          r.how === 'free'
-            ? 'This page was free.'
+          (r.how === 'free'
+            ? r.accessSent ? 'Read without paying (an access token this site gave earlier was sent with the request).' : 'This page was free.'
             : `Paid ${r.paid} USDC (${r.how})${r.deposited ? `; ${r.deposited} USDC was put into the prepaid balance for this site first` : ''}.` +
-              (r.transaction ? ` Transaction: ${config.network.explorer}/tx/${r.transaction}` : '')
+              (r.transaction ? ` Transaction: ${config.network.explorer}/tx/${r.transaction}` : '')) +
+          (r.accessUntil ? ` This payment also bought access to this site until ${r.accessUntil}; later pages there are read without paying.` : '')
         return [receipt, UNTRUSTED, '---', r.text].join('\n')
       },
     },

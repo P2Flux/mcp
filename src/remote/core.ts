@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { fromUnits, toUnits, type Config } from '../config.js'
-import { MAX_TEXT, offersFrom, toText } from '../pay.js'
+import { MAX_TEXT, offerText, offersFrom, toText } from '../pay.js'
+import { ACCESS_TOKEN } from '../ledger.js'
 import type { Fetched } from './net.js'
 
 /**
@@ -16,7 +17,7 @@ import type { Fetched } from './net.js'
  * What this server holds: a signature that can move one amount to one seller, for seconds. No keys,
  * no balances.
  */
-const USER_AGENT = 'P2Flux-MCP/0.2 (remote; +https://p2flux.com)'
+const USER_AGENT = 'P2Flux-MCP/0.3 (remote; +https://p2flux.com)'
 const TTL_MS = 15 * 60_000
 const MAX_OPEN = 1_000
 /** Open requests one caller (one network address) may hold: a flood from one place cannot push out everyone else's. */
@@ -35,6 +36,11 @@ type Pending = {
   text?: string
   transaction?: string
   error?: string
+  /** Sent back to the site with the payment: tokens it gave the person earlier. */
+  tokens: string[]
+  /** What the site answered the payment with when it bought a period: kept only as long as the request (15 minutes). */
+  accessToken?: string
+  accessUntil?: string
 }
 export type Authorization = { from: string; to: string; value: string; validAfter: string; validBefore: string; nonce: string }
 export type RemoteDeps = {
@@ -69,10 +75,19 @@ export function createRemote(deps: RemoteDeps) {
     return p
   }
 
+  /** Tokens as the assistant passed them: only well-formed ones, at most 10. They go to this page's site only. */
+  const cleanTokens = (tokens: unknown): string[] => (Array.isArray(tokens) ? [...new Set(tokens.filter((t): t is string => typeof t === 'string' && ACCESS_TOKEN.test(t)))].slice(0, 10) : [])
+  const headersFor = (tokens: string[], extra: Record<string, string> = {}) => ({
+    'user-agent': USER_AGENT,
+    accept: 'text/html,application/json;q=0.9,*/*;q=0.5',
+    ...(tokens.length ? { 'p2flux-access-token': tokens.join(', ') } : {}),
+    ...extra,
+  })
+
   /** What a page costs and whom it pays. Throws unless it is a P2Flux seller asking USDC on this network within the cap. */
-  async function offerOf(url: string, maxPrice: bigint | null): Promise<{ free: true } | { free: false; units: bigint; requirement: Requirement; resource: unknown }> {
-    const res = await deps.fetchPage(url, { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5' })
-    if (res.status >= 200 && res.status < 300) return { free: true }
+  async function offerOf(url: string, maxPrice: bigint | null, tokens: string[] = []): Promise<{ free: true; text: string } | { free: false; units: bigint; requirement: Requirement; resource: unknown; says?: string }> {
+    const res = await deps.fetchPage(url, headersFor(tokens))
+    if (res.status >= 200 && res.status < 300) return { free: true, text: toText(res.body, res.headers['content-type'] ?? '').slice(0, MAX_TEXT) }
     if (res.status !== 402) throw new Error(`the site answered HTTP ${res.status}`)
     const header = res.headers['payment-required'] ?? null
     const exact = offersFrom(config, header).find((o) => o.scheme === 'exact')
@@ -89,28 +104,33 @@ export function createRemote(deps: RemoteDeps) {
     const vault = await api(`${deps.apiUrl}/x402/vault`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ recipient }) })
     const named = vault.ok ? ((await vault.json()) as { pay_to?: unknown }).pay_to : null
     if (!same(named, requirement.payTo)) throw new Error('this site is not paid through P2Flux; it cannot be paid here')
-    return { free: false, units: exact.units, requirement, resource: doc.resource ?? { url } }
+    const says = offerText(header)
+    return { free: false, units: exact.units, requirement, resource: doc.resource ?? { url }, ...(says ? { says } : {}) }
   }
 
   return {
-    async price(url: string) {
-      const o = await offerOf(url, null)
-      return o.free ? 'This page is free to read.' : `This page costs ${fromUnits(o.units)} USDC.`
+    async price(url: string, tokens?: unknown) {
+      const t = cleanTokens(tokens)
+      const o = await offerOf(url, null, t)
+      if (o.free) return t.length ? 'This page can be read without paying (with the access tokens given).' : 'This page is free to read.'
+      return `This page costs ${fromUnits(o.units)} USDC.` + (o.says ? `\nThe site says what it buys (the site's own words): "${o.says}"` : '')
     },
 
     /** Open a payment request for the person to approve. */
-    async request(url: string, maxPrice: string | undefined, owner = '') {
+    async request(url: string, maxPrice: string | undefined, owner = '', tokens?: unknown) {
       const max = maxPrice === undefined || maxPrice === '' ? null : toUnits(maxPrice)
       if (maxPrice && max === null) throw new Error(`max_price "${maxPrice}" is not an amount like 0.10`)
-      const o = await offerOf(url, max)
-      if (o.free) return { free: true as const }
+      const t = cleanTokens(tokens)
+      const o = await offerOf(url, max, t)
+      // Opened by a token: the assistant cannot send it itself, so the text comes back here.
+      if (o.free) return t.length ? { free: true as const, text: o.text } : { free: true as const }
       sweep()
       let mine = 0
       for (const p of open.values()) if (p.owner === owner && p.state === 'waiting') mine++
       if (mine >= MAX_OPEN_PER_OWNER) throw new Error('too many payment requests are waiting for approval; approve or let some expire (15 minutes) first')
       const id = randomBytes(16).toString('hex')
-      open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, state: 'waiting', created: now(), owner })
-      return { free: false as const, id, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units) }
+      open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, state: 'waiting', created: now(), owner, tokens: t })
+      return { free: false as const, id, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units), ...(o.says ? { says: o.says } : {}) }
     },
 
     /** What the approval page shows and asks the wallet to sign. Nothing here is secret. */
@@ -157,7 +177,7 @@ export function createRemote(deps: RemoteDeps) {
       const payment = Buffer.from(JSON.stringify({ x402Version: 2, accepted: p.requirement, payload: { signature, authorization }, resource: p.resource })).toString('base64')
       let res: Fetched
       try {
-        res = await deps.fetchPage(p.url, { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5', 'payment-signature': payment })
+        res = await deps.fetchPage(p.url, headersFor(p.tokens, { 'payment-signature': payment }))
       } catch (err) {
         // Whether the site took the payment is not known: closed, not retried with the same signature.
         p.state = 'failed'
@@ -187,6 +207,12 @@ export function createRemote(deps: RemoteDeps) {
         throw new Error(p.error)
       }
       p.text = toText(res.body, res.headers['content-type'] ?? '').slice(0, MAX_TEXT)
+      const token = res.headers['p2flux-access-token']
+      if (typeof token === 'string' && ACCESS_TOKEN.test(token)) {
+        p.accessToken = token
+        const until = Date.parse(res.headers['p2flux-access-expires'] ?? '')
+        if (Number.isFinite(until)) p.accessUntil = new Date(until).toISOString().slice(0, 10)
+      }
       p.state = 'paid'
       return { paid: true, ...(p.transaction ? { transaction: p.transaction } : {}) }
     },
@@ -194,7 +220,7 @@ export function createRemote(deps: RemoteDeps) {
     /** For the assistant: the page, once the person has approved. */
     result(id: string) {
       const p = get(id)
-      if (p.state === 'paid') return { state: 'paid' as const, text: p.text ?? '', price: fromUnits(p.units), ...(p.transaction ? { transaction: p.transaction } : {}) }
+      if (p.state === 'paid') return { state: 'paid' as const, text: p.text ?? '', price: fromUnits(p.units), ...(p.transaction ? { transaction: p.transaction } : {}), ...(p.accessToken ? { accessToken: p.accessToken, accessUntil: p.accessUntil ?? '', host: new URL(p.url).host } : {}) }
       if (p.state === 'failed') return { state: 'failed' as const, error: p.error ?? 'the payment failed' }
       return { state: 'waiting' as const, link: `${deps.publicUrl}/approve/${p.id}`, price: fromUnits(p.units) }
     },

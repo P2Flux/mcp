@@ -19,7 +19,8 @@ const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64')
 const decode = (h: string) => JSON.parse(Buffer.from(h, 'base64').toString())
 const offer = (over: Record<string, unknown> = {}) => ({ scheme: 'exact', network: 'eip155:84532', asset: USDC, amount: '50000', payTo: VAULT, maxTimeoutSeconds: 300, extra: { name: 'USDC', version: '2', p2flux: { recipient: SELLER } }, ...over })
 
-function world(over: { accepts?: unknown[]; free?: boolean; paidStatus?: number; vault?: string | null; valid?: boolean } = {}) {
+const TOKEN = 'T'.repeat(43)
+function world(over: { accepts?: unknown[]; free?: boolean; paidStatus?: number; vault?: string | null; valid?: boolean; grants?: boolean } = {}) {
   const calls: { url: string; headers: Record<string, string> }[] = []
   const clock = { now: 1_790_000_000_000 }
   const deps: RemoteDeps = {
@@ -27,10 +28,12 @@ function world(over: { accepts?: unknown[]; free?: boolean; paidStatus?: number;
     fetchPage: async (url, headers): Promise<Fetched> => {
       calls.push({ url, headers })
       if (over.free) return { status: 200, headers: { 'content-type': 'text/html' }, body: 'FREE-TEXT' }
+      if (over.grants && (headers['p2flux-access-token'] ?? '').split(', ').includes(TOKEN)) return { status: 200, headers: { 'content-type': 'text/html' }, body: '<p>MEMBER-TEXT</p>' }
       if (!headers['payment-signature']) return { status: 402, headers: { 'payment-required': b64({ x402Version: 2, resource: { url }, accepts: over.accepts ?? [offer()] }) }, body: '{}' }
       const status = over.paidStatus ?? 200
       if (status === 402) return { status, headers: { 'payment-required': b64({ error: 'invalid_exact_evm_insufficient_balance' }) }, body: '{}' }
-      return { status, headers: { 'content-type': 'text/html', 'payment-response': b64({ success: true, transaction: `0x${'ab'.repeat(32)}` }) }, body: '<p>PAID-SECRET</p><script>evil()</script>' }
+      const access: Record<string, string> = over.grants ? { 'p2flux-access-token': TOKEN, 'p2flux-access-expires': '2026-11-01T23:59:59Z' } : {}
+      return { status, headers: { 'content-type': 'text/html', 'payment-response': b64({ success: true, transaction: `0x${'ab'.repeat(32)}` }), ...access }, body: '<p>PAID-SECRET</p><script>evil()</script>' }
     },
     api: (async () => (over.vault === null ? new Response('{}', { status: 400 }) : Response.json({ pay_to: over.vault ?? VAULT }))) as unknown as typeof fetch,
     verifySignature: async () => over.valid ?? true,
@@ -200,4 +203,22 @@ test('request: one caller cannot hold more than 20 waiting requests - a flood fr
   for (let i = 0; i < 20; i++) await w.remote.request(URL_, undefined, '203.0.113.9')
   await assert.rejects(w.remote.request(URL_, undefined, '203.0.113.9'), /too many payment requests/)
   assert.equal((await w.remote.request(URL_, undefined, '198.51.100.7')).free, false, 'another caller is not affected')
+})
+
+test('access tokens: a payment that bought a period hands the token to the assistant; with it, pages of that site are read without a payment', async () => {
+  const w = world({ grants: true })
+  const r = await opened(w)
+  await w.remote.approve(r.id, auth(w))
+  const out = w.remote.result(r.id)
+  assert.equal(out.state, 'paid')
+  if (out.state === 'paid') {
+    assert.equal(out.accessToken, TOKEN)
+    assert.equal(out.accessUntil, '2026-11-01')
+    assert.equal(out.host, 'shop.example')
+  }
+  const again = await w.remote.request(URL_, undefined, '', ['junk', TOKEN])
+  assert.equal(again.free, true)
+  assert.match(String((again as { text?: string }).text), /MEMBER-TEXT/)
+  assert.equal(w.calls.at(-1)!.headers['p2flux-access-token'], TOKEN, 'only well-formed tokens are sent')
+  assert.match(await w.remote.price(URL_, [TOKEN]), /without paying/)
 })

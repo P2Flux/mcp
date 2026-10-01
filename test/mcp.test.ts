@@ -234,3 +234,41 @@ test('hardening: endpoint overrides must be https; reservations are told apart b
   b([])
   assert.deepEqual(entries(c).map((e) => e.kind), ['exact'])
 })
+
+test('access tokens: kept per site from a paid answer, sent back only to that site, dropped when expired', async () => {
+  const c = cfg()
+  const { accessTokens, rememberAccess } = await import('../src/ledger.js')
+  const now = 1_790_000_000_000
+  const tok = 'A'.repeat(21) + '-' + 'b'.repeat(20) + '_'
+  assert.equal(rememberAccess(c, 'Tips.Example', 'not a token', '2099-01-01T00:00:00Z', now), null)
+  const until = rememberAccess(c, 'Tips.Example', tok, new Date(now + 30 * 86_400_000).toISOString(), now)
+  assert.equal(until, now + 30 * 86_400_000)
+  assert.deepEqual(accessTokens(c, 'tips.example', now), [tok])
+  assert.deepEqual(accessTokens(c, 'other.example', now), [], 'never sent to another site')
+  assert.deepEqual(accessTokens(c, 'tips.example', now + 31 * 86_400_000), [], 'expired')
+  assert.equal(statSync(join(c.dir, 'access.json')).mode & 0o077, 0, 'readable by the owner alone')
+  // A site that says nothing usable about expiry: one day. A site that says a thousand years: 400 days.
+  assert.equal(rememberAccess(c, 'a.example', tok, 'soon', now), now + 86_400_000)
+  assert.equal(rememberAccess(c, 'b.example', tok, '3000-01-01T00:00:00Z', now), now + 400 * 86_400_000)
+
+  // The token goes along with requests to that site.
+  const seen: (string | null)[] = []
+  const recording = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(new Request(input, init).headers.get('p2flux-access-token'))
+    return new Response('<p>covered</p>', { headers: { 'content-type': 'text/html' } })
+  }) as typeof fetch
+  const r = await readPaid(c, 'https://tips.example/pick/1/', null, recording, () => now)
+  assert.equal(r.how, 'free')
+  assert.equal(r.accessSent, true)
+  assert.deepEqual(seen, [tok])
+  await readPaid(c, 'https://other.example/x', null, recording, () => now)
+  assert.equal(seen[1], null)
+})
+
+test('check_price shows what the site says the payment buys, as the site\'s own words', async () => {
+  const c = cfg()
+  const says = 'Paying 9 USDC buys every pick by A for 30 days'
+  const p = await checkPrice(c, 'https://tips.example/pick/2/', site({ resource: { description: says + '\u0000' }, accepts: [offer()] }))
+  assert.equal(p.free, false)
+  if (!p.free) assert.equal(p.says, says)
+})

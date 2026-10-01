@@ -41,6 +41,11 @@ claude mcp add p2flux -e P2FLUX_NETWORK=test -- npx -y @p2flux/mcp
 - Money put aside at a site and not used comes back when you ask (*"take my unused balance at that
   site back"*) once 0.10 USDC of it was used or after a day without use, and on its own after a week
   without use when it is 0.50 USDC or more.
+- Some sites sell a period instead of one page - for example a tipster's subscription for 30 days,
+  at the price people pay for it. Such a payment is usually more than the default limit of 0.50 per
+  payment: raise it only if you want that. The site answers with an access token, which is kept on
+  your computer for that site only and sent back to it, so later pages there are read without paying
+  until it expires. `check_price` shows what the site says a payment buys.
 - The key is in one file only you can read. It is never sent anywhere, and no tool can reveal it -
   so nothing an assistant reads on the web can talk it into giving the key away. To move the wallet
   elsewhere, run `npx -p @p2flux/mcp p2flux-mcp export-key` in a terminal yourself.
