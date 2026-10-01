@@ -157,8 +157,11 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
     const price = exact.units;
     if (maxPrice !== null && price > maxPrice)
         throw new Error(`this page costs ${fromUnits(price)} USDC, above the maximum of ${fromUnits(maxPrice)} given for it. Nothing was paid.`);
-    if (price > config.perPayment)
-        throw new Error(`this page costs ${fromUnits(price)} USDC, above the owner's limit of ${fromUnits(config.perPayment)} per payment. Nothing was paid.`);
+    if (price > config.perPayment) {
+        const says = offerText(first.headers.get('payment-required'));
+        throw new Error(`this page costs ${fromUnits(price)} USDC, above the owner's limit of ${fromUnits(config.perPayment)} per payment${says ? ` (the site says: "${says}")` : ''}. Nothing was paid.` +
+            ' Only the owner can raise the limit (P2FLUX_MAX_PER_PAYMENT), if they want to buy it.');
+    }
     const signer = toClientEvmSigner(account(config), chainClient(config));
     const paying = (scheme, onDeposit) => {
         const client = new x402Client();

@@ -71,7 +71,8 @@ export function createRemote(deps) {
         ...extra,
     });
     /** What a page costs and whom it pays. Throws unless it is a P2Flux seller asking USDC on this network within the cap. */
-    async function offerOf(url, maxPrice, tokens = []) {
+    const confirmAbove = deps.confirmAbove ?? 5000000n;
+    async function offerOf(url, maxPrice, tokens = [], requireBudget = false) {
         const res = await deps.fetchPage(url, headersFor(tokens));
         if (res.status >= 200 && res.status < 300)
             return { free: true, text: toText(res.body, res.headers['content-type'] ?? '').slice(0, MAX_TEXT) };
@@ -89,6 +90,10 @@ export function createRemote(deps) {
             throw new Error(`this page costs ${fromUnits(exact.units)} USDC, above the ${fromUnits(deps.maxPrice)} USDC this service pays at most. Nothing was paid.`);
         if (maxPrice !== null && exact.units > maxPrice)
             throw new Error(`this page costs ${fromUnits(exact.units)} USDC, above the maximum of ${fromUnits(maxPrice)} given for it. Nothing was paid.`);
+        if (requireBudget && exact.units > confirmAbove && (maxPrice === null || maxPrice < exact.units)) {
+            const says = offerText(header);
+            throw new Error(`this page costs ${fromUnits(exact.units)} USDC${says ? ` - the site says: "${says}"` : ''}. That is more than ${fromUnits(confirmAbove)} USDC, so ask the user first whether they want to pay it; if they do, call again with max_price "${fromUnits(exact.units)}". Nothing was paid.`);
+        }
         // Only sellers paid through P2Flux: payTo must be the P2Flux address of the wallet the site names.
         const recipient = requirement.extra?.p2flux?.recipient;
         if (typeof recipient !== 'string' || !ADDRESS.test(recipient))
@@ -114,7 +119,7 @@ export function createRemote(deps) {
             if (maxPrice && max === null)
                 throw new Error(`max_price "${maxPrice}" is not an amount like 0.10`);
             const t = cleanTokens(tokens, url);
-            const o = await offerOf(url, max, t);
+            const o = await offerOf(url, max, t, true);
             if (o.free) {
                 if (!t.length)
                     return { free: true };
@@ -131,7 +136,7 @@ export function createRemote(deps) {
             if (mine >= MAX_OPEN_PER_OWNER)
                 throw new Error('too many payment requests are waiting for approval; approve or let some expire (15 minutes) first');
             const id = randomBytes(16).toString('hex');
-            open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, state: 'waiting', created: now(), owner, tokens: t });
+            open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, ...(o.says ? { says: o.says } : {}), state: 'waiting', created: now(), owner, tokens: t });
             return { free: false, id, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units), ...(o.says ? { says: o.says } : {}) };
         },
         /** What the approval page shows and asks the wallet to sign. Nothing here is secret. */
@@ -149,6 +154,8 @@ export function createRemote(deps) {
                 tokenName: p.requirement.extra.name,
                 tokenVersion: p.requirement.extra.version,
                 timeout: Math.min(Math.max(Number(p.requirement.maxTimeoutSeconds) || 300, 60), 600),
+                confirm: p.units > confirmAbove,
+                ...(p.says ? { says: p.says } : {}),
             };
         },
         /** The person's signature. It must authorize exactly what was shown; then the page is paid and fetched at once. */
@@ -156,6 +163,8 @@ export function createRemote(deps) {
             const p = get(id);
             if (p.state !== 'waiting')
                 throw new Error(p.state === 'paid' ? 'this page is already paid' : p.state === 'paying' ? 'this payment is being made; wait for it' : 'this request is closed');
+            if (p.units > confirmAbove && input.confirmed !== true)
+                throw new Error(`confirm on the page that you want to pay ${fromUnits(p.units)} USDC`);
             const a = input.authorization ?? {};
             const signature = input.signature;
             const seconds = Math.floor(now() / 1000);

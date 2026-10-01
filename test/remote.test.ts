@@ -57,7 +57,7 @@ test('request: a P2Flux seller\'s page opens a request - a link for the person, 
   assert.match(r.id, /^[0-9a-f]{32}$/)
   assert.equal(r.link, `https://agent.test/approve/${r.id}`)
   assert.equal(r.price, '0.05')
-  assert.deepEqual(w.remote.data(r.id), { state: 'waiting', url: URL_, price: '0.05', units: '50000', payTo: VAULT, asset: USDC, chainId: 84532, networkLabel: network.label, tokenName: 'USDC', tokenVersion: '2', timeout: 300 })
+  assert.deepEqual(w.remote.data(r.id), { state: 'waiting', url: URL_, price: '0.05', units: '50000', payTo: VAULT, asset: USDC, chainId: 84532, networkLabel: network.label, tokenName: 'USDC', tokenVersion: '2', timeout: 300, confirm: false })
   assert.equal(w.calls.length, 1)
   assert.equal(w.calls[0]!.headers['payment-signature'], undefined)
 })
@@ -228,4 +228,30 @@ test('access tokens: a payment that bought a period hands the token to the assis
   const before = w.calls.length
   await w.remote.price('https://evil.example/x', [sealed, `evil.example|${TOKEN}|${'A'.repeat(22)}`, TOKEN]).catch(() => {})
   assert.ok(w.calls.slice(before).every((c) => c.headers['p2flux-access-token'] === undefined), 'no token leaves to another host')
+})
+
+test('a large payment (a subscription) needs the person twice: a budget given to the assistant, and a tick on the approval page', async () => {
+  const big = offer({ amount: '499000000' })
+  const w = world({ accepts: [big] })
+  ;(w as unknown as { remote: ReturnType<typeof createRemote> }).remote = createRemote({
+    network, apiUrl: 'https://api.test', publicUrl: 'https://agent.test', maxPrice: 1_000_000_000n, confirmAbove: 5_000_000n, now: () => w.clock.now,
+    fetchPage: async (url, headers) => {
+      w.calls.push({ url, headers })
+      if (!headers['payment-signature']) return { status: 402, headers: { 'payment-required': b64({ x402Version: 2, resource: { url, description: '30 days of picks by A' }, accepts: [big] }) }, body: '{}' }
+      return { status: 200, headers: { 'content-type': 'text/html' }, body: '<p>BIG</p>' }
+    },
+    api: (async () => Response.json({ pay_to: VAULT })) as unknown as typeof fetch,
+    verifySignature: async () => true,
+  })
+  await assert.rejects(w.remote.request(URL_, undefined), /499.*30 days of picks by A.*ask the user first.*max_price "499.00"/s)
+  await assert.rejects(w.remote.request(URL_, '100'), /above the maximum of 100/)
+  const r = await w.remote.request(URL_, '499')
+  assert.equal(r.free, false)
+  const id = (r as { id: string }).id
+  const shown = w.remote.data(id)
+  assert.equal(shown.confirm, true)
+  assert.equal(shown.says, '30 days of picks by A')
+  const signed = auth(w, { value: '499000000' })
+  await assert.rejects(w.remote.approve(id, signed), /confirm on the page/)
+  assert.deepEqual(await w.remote.approve(id, { ...signed, confirmed: true }), { paid: true })
 })

@@ -21,14 +21,17 @@ const env = process.env
 const network = loadConfig({ P2FLUX_NETWORK: env.P2FLUX_NETWORK }).network
 const publicUrl = (env.P2FLUX_PUBLIC_URL ?? '').replace(/\/$/, '')
 if (!/^https:\/\/[a-z0-9.-]+$/.test(publicUrl) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(publicUrl)) throw new Error('P2FLUX_PUBLIC_URL must be the https address this server is reachable at')
-const maxPrice = toUnits(env.P2FLUX_REMOTE_MAX_PRICE ?? '5')
+// The most one payment may be (Agent Paywall itself charges at most 1000), and above which the person is asked twice.
+const maxPrice = toUnits(env.P2FLUX_REMOTE_MAX_PRICE ?? '1000')
 if (maxPrice === null || maxPrice <= 0n) throw new Error('P2FLUX_REMOTE_MAX_PRICE must be an amount in USDC')
+const confirmAbove = toUnits(env.P2FLUX_REMOTE_CONFIRM_ABOVE ?? '5')
+if (confirmAbove === null) throw new Error('P2FLUX_REMOTE_CONFIRM_ABOVE must be an amount in USDC')
 const apiUrl = (env.P2FLUX_API_URL ?? '').trim() || network.api
 const testMoney = network.caip === 'eip155:84532'
 const chain = createPublicClient({ chain: network.chain, transport: http(env.P2FLUX_RPC_URL || undefined) })
 
 const remote = createRemote({
-  network, apiUrl, publicUrl, maxPrice,
+  network, apiUrl, publicUrl, maxPrice, confirmAbove,
   ...(env.P2FLUX_REMOTE_SECRET && env.P2FLUX_REMOTE_SECRET.length >= 32 ? { secret: Buffer.from(env.P2FLUX_REMOTE_SECRET) } : {}),
   fetchPage: (url, headers) => publicFetch(url, headers, testMoney && env.P2FLUX_REMOTE_ALLOW_LOCAL === '1'),
   verifySignature: (p, a, signature) =>
@@ -55,7 +58,7 @@ const remoteTools = (owner: string) => ({
     description: 'Ask to read a paid web page. Returns a link the USER must open to approve the payment in their own wallet - show the link and the price to the user and wait. Then call get_paid_page with the request_id. Nothing is paid without the user approving it.',
     input: {
       url: z.string().max(2048).describe('The page address (https).'),
-      max_price: z.string().max(12).optional().describe('The most to pay for this page, in USDC, e.g. "0.10".'),
+      max_price: z.string().max(12).optional().describe('The most to pay for this page, in USDC, e.g. "0.10". Required, after asking the user, for anything above a few USDC (a subscription).'),
       access_tokens: ACCESS_TOKENS,
     },
     run: async ({ url, max_price, access_tokens }: { url: string; max_price?: string; access_tokens?: string[] }) => {

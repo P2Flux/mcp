@@ -73,7 +73,11 @@ holds **no wallet, no balance and no history**, and needs no login. Tools: `find
 3. The page is paid and fetched at once; the assistant reads it.
 
 Only sites paid through P2Flux can be paid, only in USDC on Base, and never more than
-`P2FLUX_REMOTE_MAX_PRICE` (default 5 USDC). The server reads only public https websites.
+`P2FLUX_REMOTE_MAX_PRICE` (default 1000 USDC). Above `P2FLUX_REMOTE_CONFIRM_ABOVE` (default 5 USDC) -
+a subscription, say - the person is asked twice: the assistant must first ask them and pass their
+budget as `max_price`, and the approval page shows the amount and what the site says it sells, with
+a box to tick before the wallet opens. `P2FLUX_REMOTE_SECRET` (32+ characters) seals access tokens to
+their site across restarts. The server reads only public https websites.
 
 ```bash
 P2FLUX_PUBLIC_URL=https://agent.example.com P2FLUX_NETWORK=test PORT=8787 npx -p @p2flux/mcp p2flux-mcp-remote

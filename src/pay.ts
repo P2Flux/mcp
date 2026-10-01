@@ -160,7 +160,13 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
   if (!exact) throw new Error(`this page asks for payment, but not in USDC on ${config.network.label} - it cannot be paid from this wallet`)
   const price = exact.units
   if (maxPrice !== null && price > maxPrice) throw new Error(`this page costs ${fromUnits(price)} USDC, above the maximum of ${fromUnits(maxPrice)} given for it. Nothing was paid.`)
-  if (price > config.perPayment) throw new Error(`this page costs ${fromUnits(price)} USDC, above the owner's limit of ${fromUnits(config.perPayment)} per payment. Nothing was paid.`)
+  if (price > config.perPayment) {
+    const says = offerText(first.headers.get('payment-required'))
+    throw new Error(
+      `this page costs ${fromUnits(price)} USDC, above the owner's limit of ${fromUnits(config.perPayment)} per payment${says ? ` (the site says: "${says}")` : ''}. Nothing was paid.` +
+        ' Only the owner can raise the limit (P2FLUX_MAX_PER_PAYMENT), if they want to buy it.',
+    )
+  }
 
   const signer = toClientEvmSigner(account(config), chainClient(config) as never)
   const paying = (scheme: 'exact' | 'batch-settlement', onDeposit?: (units: bigint) => void) => {

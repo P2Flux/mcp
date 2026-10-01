@@ -11,7 +11,10 @@ ExecStart=/usr/bin/node dist/remote.js
 Environment=P2FLUX_NETWORK=test
 Environment=P2FLUX_PUBLIC_URL=https://agent-test.p2flux.com
 Environment=P2FLUX_TRUST_PROXY=1
-Environment=P2FLUX_REMOTE_MAX_PRICE=5
+Environment=P2FLUX_REMOTE_MAX_PRICE=1000
+Environment=P2FLUX_REMOTE_CONFIRM_ABOVE=5
+# P2FLUX_REMOTE_SECRET (32+ characters) in this file, readable by root only:
+EnvironmentFile=-/etc/p2flux-mcp-remote.env
 Environment=PORT=8787
 Restart=on-failure
 RestartSec=2

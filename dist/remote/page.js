@@ -16,6 +16,7 @@ dl{margin:0 0 1.5rem}dt{font-size:.8rem;color:#5b6472;margin-top:.75rem}dd{margi
 button{font:inherit;font-weight:600;width:100%;padding:.85rem;border:0;border-radius:8px;background:#1652f0;color:#fff;cursor:pointer}
 button:disabled{background:#9aa3b2;cursor:default}
 #status{margin-top:1rem;min-height:1.5rem}.ok{color:#0a7d33}.err{color:#b3261e}
+#warn{display:none;background:#fff4e5;border:1px solid #f0b85a;border-radius:8px;padding:.85rem;margin:0 0 1rem}#warn label{display:flex;gap:.5rem;margin-top:.5rem;font-weight:600}
 small{display:block;margin-top:1.25rem;color:#5b6472}
 </style></head><body><main>
 <h1>Your assistant asks to pay for a page</h1>
@@ -24,7 +25,9 @@ small{display:block;margin-top:1.25rem;color:#5b6472}
 <dt>Page</dt><dd id="url">…</dd>
 <dt>Paid to (seller's P2Flux address)</dt><dd id="payto">…</dd>
 <dt>Network</dt><dd id="network">…</dd>
+<dt>What the site says it sells (the site's words)</dt><dd id="says">-</dd>
 </dl>
+<div id="warn"><div id="warntext"></div><label><input type="checkbox" id="ok"> I want to pay this amount</label></div>
 <button id="approve" disabled>Connect wallet and approve</button>
 <div id="status" role="status" aria-live="polite"></div>
 <small>You sign one USDC transfer of exactly this amount in your own wallet. It costs no network fee. P2Flux never holds your money or your key. If you did not ask an assistant for this page, close this window.</small>
@@ -43,10 +46,16 @@ export const PAGE_JS = `(async () => {
   $('url').textContent = d.url
   $('payto').textContent = d.payTo
   $('network').textContent = d.networkLabel
+  if (d.says) $('says').textContent = d.says
+  if (d.confirm) {
+    $('warn').style.display = 'block'
+    $('warntext').textContent = 'This is a large payment: ' + d.price + ' USDC. Check the amount and what the site says it sells before you approve.'
+  }
   if (d.state !== 'waiting') return say(d.state === 'paid' ? 'Already paid. Go back to your assistant.' : 'This request is closed.', d.state === 'paid' ? 'ok' : 'err')
   const button = $('approve')
   if (!window.ethereum) return say('No wallet found in this browser. Install a wallet extension (Coinbase Wallet, MetaMask) and reload.', 'err')
-  button.disabled = false
+  button.disabled = !!d.confirm
+  $('ok').onchange = () => { button.disabled = !$('ok').checked }
   button.onclick = async () => {
     button.disabled = true
     try {
@@ -69,13 +78,13 @@ export const PAGE_JS = `(async () => {
       }
       const signature = await ethereum.request({ method: 'eth_signTypedData_v4', params: [from, JSON.stringify(typed)] })
       say('Paying…')
-      const r = await fetch('/approve/' + id, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ signature, authorization }) })
+      const r = await fetch('/approve/' + id, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ signature, authorization, confirmed: !!d.confirm && $('ok').checked }) })
       const out = await r.json()
       if (!r.ok) throw new Error(out.error || 'the payment was not accepted')
       say('Paid. Go back to your assistant - it has the page now.', 'ok')
     } catch (e) {
       say((e && e.message) || 'Cancelled.', 'err')
-      button.disabled = false
+      button.disabled = !!d.confirm && !$('ok').checked
     }
   }
 })()`;
