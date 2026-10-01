@@ -4,7 +4,7 @@ import { ExactEvmScheme, toClientEvmSigner } from '@x402/evm';
 import { BatchSettlementEvmScheme } from '@x402/evm/batch-settlement/client';
 import { FileClientChannelStorage } from '@x402/evm/batch-settlement/client/file-storage';
 import { fromUnits } from './config.js';
-import { entries, refusal, reserve, spentToday } from './ledger.js';
+import { accessTokens, entries, refusal, rememberAccess, reserve, spentToday } from './ledger.js';
 import { account, chainClient } from './wallet.js';
 /**
  * Paying for a URL. The payment itself is the official x402 client; what is here is everything that
@@ -16,7 +16,7 @@ import { account, chainClient } from './wallet.js';
  *     second, higher price to the paying request gets no signature;
  *   - money that may leave is written down first, so a crash cannot forget it.
  */
-const USER_AGENT = 'P2Flux-MCP/0.2 (+https://p2flux.com)';
+const USER_AGENT = 'P2Flux-MCP/0.3 (+https://p2flux.com)';
 const MAX_BODY = 2 * 1024 * 1024;
 export const MAX_TEXT = 60_000;
 /** https everywhere; plain http only for this machine, and only with test money. */
@@ -98,18 +98,34 @@ async function bodyOf(res) {
     }
     return Buffer.concat(chunks).toString('utf8');
 }
-const plain = (f, url) => f(url, { headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5' }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
+/** Access tokens this site gave earlier go back to it, and only to it (always over https, see checkedUrl). */
+const tokenHeader = (tokens) => (tokens.length ? { 'p2flux-access-token': tokens.join(', ') } : {});
+const plain = (f, url, tokens = []) => f(url, { headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/json;q=0.9,*/*;q=0.5', ...tokenHeader(tokens) }, redirect: 'error', signal: AbortSignal.timeout(30_000) });
 /** Every request that carries a signed payment: never redirected (a payment must not follow a site
  *  elsewhere), and a whole answer within 30 s. */
-const named = (f) => ((i, init) => {
+const named = (f, tokens = []) => ((i, init) => {
     const request = new Request(i, { ...init, redirect: 'error', signal: AbortSignal.timeout(30_000) });
     request.headers.set('user-agent', USER_AGENT);
+    for (const [k, v] of Object.entries(tokenHeader(tokens)))
+        request.headers.set(k, v);
     return f(request);
 });
+/** What the site says the payment buys (x402 resource.description): a stranger's words, clipped. */
+export function offerText(header) {
+    if (!header || header.length > 65_536)
+        return undefined;
+    try {
+        const d = JSON.parse(Buffer.from(header, 'base64').toString('utf8')).resource?.description;
+        return typeof d === 'string' && d.trim() ? d.replace(/[\u0000-\u001f]+/g, ' ').trim().slice(0, 400) : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
 /** What a URL costs. Pays nothing. */
 export async function checkPrice(config, input, f = fetch) {
     const url = checkedUrl(config, input);
-    const res = await plain(f, url);
+    const res = await plain(f, url, accessTokens(config, url.host));
     if (res.status !== 402) {
         await res.body?.cancel();
         if (res.ok)
@@ -121,14 +137,16 @@ export async function checkPrice(config, input, f = fetch) {
     const exact = offers.find((o) => o.scheme === 'exact');
     if (!exact)
         throw new Error(`this page asks for payment, but not in USDC on ${config.network.label} - it cannot be paid from this wallet`);
-    return { free: false, price: fromUnits(exact.units), prepaid: offers.some((o) => o.scheme === 'batch-settlement'), offers };
+    const says = offerText(res.headers.get('payment-required'));
+    return { free: false, price: fromUnits(exact.units), prepaid: offers.some((o) => o.scheme === 'batch-settlement'), offers, ...(says ? { says } : {}) };
 }
 /** Read a URL, paying if it asks - within `maxPrice`, the limit per payment and the daily limit. */
 export async function readPaid(config, input, maxPrice, f = fetch, now = Date.now) {
     const url = checkedUrl(config, input);
-    const first = await plain(f, url);
+    const tokens = accessTokens(config, url.host, now());
+    const first = await plain(f, url, tokens);
     if (first.ok)
-        return { text: toText(await bodyOf(first), first.headers.get('content-type') ?? ''), paid: '0.00', how: 'free' };
+        return { text: toText(await bodyOf(first), first.headers.get('content-type') ?? ''), paid: '0.00', how: 'free', ...(tokens.length ? { accessSent: true } : {}) };
     await first.body?.cancel();
     if (first.status !== 402)
         throw new Error(`the site answered HTTP ${first.status}`);
@@ -162,8 +180,13 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
                 },
             }));
         }
-        const signedFetch = named(f);
+        const signedFetch = named(f, tokens);
         return wrapFetchWithPayment(signedFetch, client);
+    };
+    // A payment that bought a period (a subscription) is answered with a token for later requests.
+    const accessOf = (res) => {
+        const until = rememberAccess(config, url.host, res.headers.get('p2flux-access-token'), res.headers.get('p2flux-access-expires'), now());
+        return until === null ? {} : { accessUntil: new Date(until).toISOString().slice(0, 10) };
     };
     const transactionOf = (res) => {
         try {
@@ -196,7 +219,7 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
             const res = await paying('batch-settlement', onDeposit)(url);
             if (res.ok) {
                 close(depositEntry(transactionOf(res)), true);
-                return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(price), how: 'prepaid balance', ...(deposited > 0n ? { deposited: fromUnits(deposited) } : {}) };
+                return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(price), how: 'prepaid balance', ...(deposited > 0n ? { deposited: fromUnits(deposited) } : {}), ...accessOf(res) };
             }
             await res.body?.cancel();
             // Whether a signed deposit went out is not known here: it stays counted.
@@ -229,7 +252,7 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
     settle([{ at: now(), url: url.toString(), units: price.toString(), kind: 'exact', ...(transaction ? { transaction } : {}) }]);
     if (!res.ok)
         throw new Error(`paid ${fromUnits(price)} USDC, but the site answered HTTP ${res.status}`);
-    return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(price), how: 'per page', ...(transaction ? { transaction } : {}) };
+    return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(price), how: 'per page', ...(transaction ? { transaction } : {}), ...accessOf(res) };
 }
 /**
  * Take the unused prepaid balance for a site back into the wallet. The site is asked to return it
