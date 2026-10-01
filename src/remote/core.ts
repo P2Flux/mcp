@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { fromUnits, toUnits, type Config } from '../config.js'
 import { MAX_TEXT, offerText, offersFrom, toText } from '../pay.js'
 import { ACCESS_TOKEN } from '../ledger.js'
@@ -55,6 +55,8 @@ export type RemoteDeps = {
   verifySignature: (p: Pending, authorization: Authorization, signature: string) => Promise<boolean>
   api?: typeof fetch
   now?: () => number
+  /** Signs the access tokens handed to assistants to their site. Set it (P2FLUX_REMOTE_SECRET) so they survive a restart. */
+  secret?: Buffer
 }
 
 const same = (a: unknown, b: unknown) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
@@ -75,8 +77,27 @@ export function createRemote(deps: RemoteDeps) {
     return p
   }
 
-  /** Tokens as the assistant passed them: only well-formed ones, at most 10. They go to this page's site only. */
-  const cleanTokens = (tokens: unknown): string[] => (Array.isArray(tokens) ? [...new Set(tokens.filter((t): t is string => typeof t === 'string' && ACCESS_TOKEN.test(t)))].slice(0, 10) : [])
+  /* A site's access token goes to the assistant sealed to that site: "host|token|mac". This server keeps
+   * nothing, so the seal is what stops a page from talking the assistant into sending another site's
+   * token to it - a token comes back only to the host it was sealed for. */
+  const secret = deps.secret ?? randomBytes(32)
+  const macOf = (host: string, token: string) => createHmac('sha256', secret).update(`${host}|${token}`).digest('base64url').slice(0, 22)
+  const seal = (host: string, token: string) => `${host}|${token}|${macOf(host, token)}`
+  const cleanTokens = (tokens: unknown, url: string): string[] => {
+    let host = ''
+    try {
+      host = new URL(url).host.toLowerCase()
+    } catch {
+      return []
+    }
+    const out: string[] = []
+    for (const t of Array.isArray(tokens) ? tokens.slice(0, 10) : []) {
+      const [h, token, mac] = typeof t === 'string' ? t.split('|') : []
+      if (h !== host || !token || !ACCESS_TOKEN.test(token) || typeof mac !== 'string' || mac.length !== 22) continue
+      if (timingSafeEqual(Buffer.from(mac), Buffer.from(macOf(host, token))) && !out.includes(token)) out.push(token)
+    }
+    return out
+  }
   const headersFor = (tokens: string[], extra: Record<string, string> = {}) => ({
     'user-agent': USER_AGENT,
     accept: 'text/html,application/json;q=0.9,*/*;q=0.5',
@@ -110,7 +131,7 @@ export function createRemote(deps: RemoteDeps) {
 
   return {
     async price(url: string, tokens?: unknown) {
-      const t = cleanTokens(tokens)
+      const t = cleanTokens(tokens, url)
       const o = await offerOf(url, null, t)
       if (o.free) return t.length ? 'This page can be read without paying (with the access tokens given).' : 'This page is free to read.'
       return `This page costs ${fromUnits(o.units)} USDC.` + (o.says ? `\nThe site says what it buys (the site's own words): "${o.says}"` : '')
@@ -120,10 +141,15 @@ export function createRemote(deps: RemoteDeps) {
     async request(url: string, maxPrice: string | undefined, owner = '', tokens?: unknown) {
       const max = maxPrice === undefined || maxPrice === '' ? null : toUnits(maxPrice)
       if (maxPrice && max === null) throw new Error(`max_price "${maxPrice}" is not an amount like 0.10`)
-      const t = cleanTokens(tokens)
+      const t = cleanTokens(tokens, url)
       const o = await offerOf(url, max, t)
-      // Opened by a token: the assistant cannot send it itself, so the text comes back here.
-      if (o.free) return t.length ? { free: true as const, text: o.text } : { free: true as const }
+      if (o.free) {
+        if (!t.length) return { free: true as const }
+        // Opened by a token: the assistant cannot send it itself, so the text comes back here - but only
+        // for a page that is not public anyway (this is not a general page fetcher).
+        const bare = await deps.fetchPage(url, headersFor([]))
+        return bare.status === 402 ? { free: true as const, text: o.text } : { free: true as const }
+      }
       sweep()
       let mine = 0
       for (const p of open.values()) if (p.owner === owner && p.state === 'waiting') mine++
@@ -209,7 +235,7 @@ export function createRemote(deps: RemoteDeps) {
       p.text = toText(res.body, res.headers['content-type'] ?? '').slice(0, MAX_TEXT)
       const token = res.headers['p2flux-access-token']
       if (typeof token === 'string' && ACCESS_TOKEN.test(token)) {
-        p.accessToken = token
+        p.accessToken = seal(new URL(p.url).host.toLowerCase(), token)
         const until = Date.parse(res.headers['p2flux-access-expires'] ?? '')
         if (Number.isFinite(until)) p.accessUntil = new Date(until).toISOString().slice(0, 10)
       }

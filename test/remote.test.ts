@@ -212,13 +212,20 @@ test('access tokens: a payment that bought a period hands the token to the assis
   const out = w.remote.result(r.id)
   assert.equal(out.state, 'paid')
   if (out.state === 'paid') {
-    assert.equal(out.accessToken, TOKEN)
+    assert.match(String(out.accessToken), new RegExp(`^shop\\.example\\|${TOKEN}\\|`))
     assert.equal(out.accessUntil, '2026-11-01')
     assert.equal(out.host, 'shop.example')
   }
-  const again = await w.remote.request(URL_, undefined, '', ['junk', TOKEN])
+  const sealed = out.state === 'paid' ? String(out.accessToken) : ''
+  assert.match(sealed, new RegExp(`^shop\\.example\\|${TOKEN}\\|[A-Za-z0-9_-]{22}$`))
+  const again = await w.remote.request(URL_, undefined, '', ['junk', sealed])
   assert.equal(again.free, true)
   assert.match(String((again as { text?: string }).text), /MEMBER-TEXT/)
-  assert.equal(w.calls.at(-1)!.headers['p2flux-access-token'], TOKEN, 'only well-formed tokens are sent')
-  assert.match(await w.remote.price(URL_, [TOKEN]), /without paying/)
+  assert.ok(w.calls.some((c) => c.headers['p2flux-access-token'] === TOKEN), 'the bare token goes to its own site')
+  assert.match(await w.remote.price(URL_, [sealed]), /without paying/)
+
+  // Sealed to shop.example: never sent anywhere else, whatever an assistant is talked into.
+  const before = w.calls.length
+  await w.remote.price('https://evil.example/x', [sealed, `evil.example|${TOKEN}|${'A'.repeat(22)}`, TOKEN]).catch(() => {})
+  assert.ok(w.calls.slice(before).every((c) => c.headers['p2flux-access-token'] === undefined), 'no token leaves to another host')
 })
