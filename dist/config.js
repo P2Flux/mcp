@@ -53,6 +53,8 @@ export function loadConfig(env = process.env) {
         perPayment,
         perDay,
         /** The most one prepaid deposit may be. 0 switches prepaid off: every page is paid on its own. */
+        /** Above the budget, a payment the person confirms in a dialog may be at most this. */
+        maxConfirmed: limit('P2FLUX_MAX_CONFIRMED', '1000', '1000'),
         maxPrepaid: (env.P2FLUX_MAX_PREPAID ?? '').trim() === '0' ? 0n : limit('P2FLUX_MAX_PREPAID', '1', '100'),
         rpcUrl: endpoint('P2FLUX_RPC_URL', env.P2FLUX_RPC_URL) ?? undefined,
         apiUrl: endpoint('P2FLUX_API_URL', env.P2FLUX_API_URL) ?? network.api,

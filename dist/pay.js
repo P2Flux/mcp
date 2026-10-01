@@ -140,8 +140,7 @@ export async function checkPrice(config, input, f = fetch) {
     const says = offerText(res.headers.get('payment-required'));
     return { free: false, price: fromUnits(exact.units), prepaid: offers.some((o) => o.scheme === 'batch-settlement'), offers, ...(says ? { says } : {}) };
 }
-/** Read a URL, paying if it asks - within `maxPrice`, the limit per payment and the daily limit. */
-export async function readPaid(config, input, maxPrice, f = fetch, now = Date.now) {
+export async function readPaid(config, input, maxPrice, f = fetch, now = Date.now, ask) {
     const url = checkedUrl(config, input);
     const tokens = accessTokens(config, url.host, now());
     const first = await plain(f, url, tokens);
@@ -157,14 +156,30 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
     const price = exact.units;
     if (maxPrice !== null && price > maxPrice)
         throw new Error(`this page costs ${fromUnits(price)} USDC, above the maximum of ${fromUnits(maxPrice)} given for it. Nothing was paid.`);
-    if (price > config.perPayment) {
+    /* The budget: inside it the payment simply goes through. Above it - one payment over the limit per
+     * payment, or over what is left of the day - the PERSON is asked in a dialog of their app, which the
+     * assistant cannot answer; never above P2FLUX_MAX_CONFIRMED. */
+    const spent = spentToday(entries(config), now());
+    const overBudget = price > config.perPayment || spent + price > config.perDay;
+    let confirmed = false;
+    if (overBudget) {
         const says = offerText(first.headers.get('payment-required'));
-        throw new Error(`this page costs ${fromUnits(price)} USDC, above the owner's limit of ${fromUnits(config.perPayment)} per payment${says ? ` (the site says: "${says}")` : ''}. Nothing was paid.` +
-            ' Only the owner can raise the limit (P2FLUX_MAX_PER_PAYMENT), if they want to buy it.');
+        const budget = `your budget is ${fromUnits(config.perPayment)} USDC per payment and ${fromUnits(config.perDay)} USDC a day (${fromUnits(spent)} spent in the last 24 hours)`;
+        if (price > config.maxConfirmed)
+            throw new Error(`this page costs ${fromUnits(price)} USDC, above the most this wallet ever pays (${fromUnits(config.maxConfirmed)}). Nothing was paid.`);
+        const answer = ask ? await ask(`Pay ${fromUnits(price)} USDC to ${url.host}? This is above ${budget}.${says ? ` The site says what it sells: "${says}"` : ''}`) : null;
+        if (answer === null) {
+            throw new Error(`this page costs ${fromUnits(price)} USDC${says ? ` (the site says: "${says}")` : ''}, above ${budget}, and this app cannot ask the user to confirm. Nothing was paid. The owner can raise the budget (P2FLUX_MAX_PER_PAYMENT, P2FLUX_MAX_PER_DAY).`);
+        }
+        if (!answer)
+            throw new Error('the user declined the payment. Nothing was paid.');
+        confirmed = true;
     }
     const signer = toClientEvmSigner(account(config), chainClient(config));
     const paying = (scheme, onDeposit) => {
-        const client = new x402Client();
+        // The library's own cap (1 USDC by default) set to exactly the price checked above: no more, and
+        // nothing less that would stop a payment the budget or the person allowed.
+        const client = new x402Client().setSpendControls({ maxAmountPerPayment: false, allowedAssets: [{ network: config.network.caip, asset: config.network.usdc, maxAmountPerPayment: price.toString() }] });
         // The client may sign this scheme, on this network, in USDC, at the price that was checked. Nothing else.
         client.registerPolicy((_version, requirements) => requirements.filter((r) => r.scheme === scheme && r.network === config.network.caip && String(r.asset).toLowerCase() === config.network.usdc.toLowerCase() && r.amount === price.toString()));
         if (scheme === 'exact')
@@ -202,7 +217,7 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
     };
     // Prepaid first when the site offers it and the owner allows it: no transaction per page.
     const batch = offers.find((o) => o.scheme === 'batch-settlement' && o.units === price);
-    if (batch && config.maxPrepaid > 0n && batch.minDeposit <= config.maxPrepaid) {
+    if (!confirmed && batch && config.maxPrepaid > 0n && batch.minDeposit <= config.maxPrepaid) {
         let deposited = 0n;
         // A deposit is written down the moment it is decided, before it is signed.
         let settleDeposit = null;
@@ -232,7 +247,7 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
             close(depositEntry(), false);
         }
     }
-    const why = refusal(config, price, entries(config), now());
+    const why = confirmed ? null : refusal(config, price, entries(config), now());
     if (why)
         throw new Error(`paying ${fromUnits(price)} USDC for this page would go ${why} (${fromUnits(config.perDay)} USDC a day, ${fromUnits(spentToday(entries(config), now()))} spent in the last 24 hours). Nothing was paid.`);
     const settle = reserve(config, url.toString(), price, now());

@@ -16,7 +16,18 @@ if (process.argv[2] === 'export-key') {
     process.exit(0);
 }
 const server = new McpServer({ name: 'p2flux', version: '0.3.0' });
-for (const [name, tool] of Object.entries(tools(config))) {
+/* Above the budget the person is asked in their own app (MCP elicitation) - a dialog the assistant
+ * cannot answer for them. An app that cannot show one gets null: the payment is refused, as before. */
+const ask = async (message) => {
+    if (!server.server.getClientCapabilities()?.elicitation)
+        return null;
+    const r = await server.server.elicitInput({
+        message,
+        requestedSchema: { type: 'object', properties: { pay: { type: 'boolean', title: 'Pay this amount', default: false } }, required: ['pay'] },
+    });
+    return r.action === 'accept' && r.content?.pay === true;
+};
+for (const [name, tool] of Object.entries(tools(config, fetch, ask))) {
     server.registerTool(name, { description: tool.description, inputSchema: tool.input }, (async (args) => {
         try {
             return { content: [{ type: 'text', text: await tool.run(args) }] };

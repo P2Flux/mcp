@@ -159,9 +159,9 @@ test('REFUSED WITHOUT PAYING: above max_price, above the limit per payment, abov
   const calls: string[] = []
   const at = (amount: string) => site({ accepts: [offer({ amount })] }, calls)
   await assert.rejects(readPaid(c, 'https://news.example/a', 40_000n, at('50000')), /above the maximum of 0.04/)
-  await assert.rejects(readPaid(c, 'https://news.example/a', null, at('100001')), /above the owner's limit of 0.10 per payment/)
+  await assert.rejects(readPaid(c, 'https://news.example/a', null, at('100001')), /above your budget is 0.10 USDC per payment.*cannot ask the user/)
   reserve(c, 'https://news.example/earlier', 160_000n)([{ at: Date.now(), url: 'https://news.example/earlier', units: '160000', kind: 'exact' }])
-  await assert.rejects(readPaid(c, 'https://news.example/a', null, at('50000')), /daily limit/)
+  await assert.rejects(readPaid(c, 'https://news.example/a', null, at('50000')), /0.20 USDC a day.*cannot ask the user/)
   await assert.rejects(readPaid(c, 'https://news.example/a', null, site({ accepts: [offer({ network: 'eip155:8453' })] }, calls)), /cannot be paid from this wallet/)
   await assert.rejects(readPaid(c, 'http://news.example/a', null, at('50000')), /https/)
   assert.equal(calls.filter((x) => x.endsWith('PAID')).length, 0, 'no request ever carried a payment')
@@ -271,4 +271,34 @@ test('check_price shows what the site says the payment buys, as the site\'s own 
   const p = await checkPrice(c, 'https://tips.example/pick/2/', site({ resource: { description: says + '\u0000' }, accepts: [offer()] }))
   assert.equal(p.free, false)
   if (!p.free) assert.equal(p.says, says)
+})
+
+test('BUDGET: inside it pays; above it the person is asked - declined pays nothing, accepted pays once; never above the hard maximum', async () => {
+  const c = cfg({ P2FLUX_MAX_PER_PAYMENT: '0.10', P2FLUX_MAX_PER_DAY: '0.20', P2FLUX_MAX_PREPAID: '0', P2FLUX_MAX_CONFIRMED: '500' })
+  account(c, true)
+  const calls: string[] = []
+  const shop = (amount: string) => (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = new Request(input, init)
+    const paid = !!req.headers.get('payment-signature')
+    calls.push(paid ? 'PAID' : 'plain')
+    if (paid) return new Response('<p>BOUGHT</p>', { headers: { 'content-type': 'text/html', 'payment-response': b64({ success: true, transaction: `0x${'ab'.repeat(32)}` }) } })
+    return new Response('{}', { status: 402, headers: { 'payment-required': b64({ x402Version: 2, resource: { url: req.url, description: '30 days of picks by A' }, accepts: [offer({ amount, maxTimeoutSeconds: 300, extra: { name: 'USDC', version: '2' } })] }) } })
+  }) as typeof fetch
+  const asked: string[] = []
+  const say = (answer: boolean) => async (m: string) => (asked.push(m), answer)
+
+  await assert.rejects(readPaid(c, 'https://tips.example/p', null, shop('9000000'), Date.now, say(false)), /declined/)
+  assert.match(asked[0]!, /Pay 9.00 USDC to tips.example\? This is above your budget .*30 days of picks by A/)
+  assert.equal(calls.includes('PAID'), false, 'declined: nothing signed')
+
+  const r = await readPaid(c, 'https://tips.example/p', null, shop('9000000'), Date.now, say(true))
+  assert.equal(r.paid, '9.00')
+  assert.match(r.text, /BOUGHT/)
+  assert.equal(calls.filter((x) => x === 'PAID').length, 1)
+  assert.equal(spentToday(entries(c)), 9_000_000n, 'counted like any payment')
+
+  await assert.rejects(readPaid(c, 'https://tips.example/p', null, shop('600000000'), Date.now, say(true)), /most this wallet ever pays \(500.00\)/)
+  const before = asked.length
+  await assert.rejects(readPaid(c, 'https://tips.example/q', 1_000_000n, shop('9000000'), Date.now, say(true)), /above the maximum of 1.00/)
+  assert.equal(asked.length, before, 'the assistant\'s own max_price is never overridden by asking')
 })

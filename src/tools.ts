@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { fromUnits, toUnits, type Config } from './config.js'
 import { entries, spentToday } from './ledger.js'
-import { checkPrice, readPaid, withdrawPrepaid } from './pay.js'
+import { checkPrice, readPaid, withdrawPrepaid, type Ask } from './pay.js'
 import { account, usdcBalance, walletExists } from './wallet.js'
 
 /**
@@ -25,7 +25,7 @@ const funding = (config: Config, address: string) =>
     ? `To add money: send USDC on the Base network to ${address} (in the Coinbase app: Send, choose USDC, choose the Base network, paste the address). Send a small amount - this wallet is for small payments, like cash in a pocket.`
     : `This is TEST mode (${config.network.label}): no real money. Get free test USDC at https://faucet.circle.com - choose "Base Sepolia" and paste ${address}.`
 
-export function tools(config: Config, f: Fetch = fetch) {
+export function tools(config: Config, f: Fetch = fetch, ask?: Ask) {
   return {
     wallet_setup: {
       description: 'Create the P2Flux wallet on this computer (if there is none) and show its address and how to add money. Run this first.',
@@ -91,7 +91,7 @@ export function tools(config: Config, f: Fetch = fetch) {
       run: async ({ url, max_price }: { url: string; max_price?: string }) => {
         const max = max_price === undefined || max_price === '' ? null : toUnits(max_price)
         if (max_price && max === null) throw new Error(`max_price "${max_price}" is not an amount like 0.10`)
-        const r = await readPaid(config, url, max, f)
+        const r = await readPaid(config, url, max, f, Date.now, ask)
         const receipt =
           (r.how === 'free'
             ? r.accessSent ? 'Read without paying (an access token this site gave earlier was sent with the request).' : 'This page was free.'
