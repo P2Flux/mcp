@@ -6,7 +6,7 @@ more than the limits you set. P2Flux never holds your money or your key.
 
 ## Claude Desktop (no technical knowledge needed)
 
-1. Download `p2flux.mcpb` and double-click it. Claude Desktop asks you to install it.
+1. Download [`p2flux.mcpb`](https://github.com/P2Flux/mcp/releases/latest/download/p2flux.mcpb) and double-click it. Claude Desktop asks you to install it.
 2. In the form, leave **Money** on `test` the first time, and set your limits
    (default: 0.50 USDC per page, 5 USDC per day).
 3. Ask Claude: **"Set up my P2Flux wallet."** Claude shows the wallet's address and how to add money.
