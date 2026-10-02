@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.P2Flux/mcp",
+  "description": "Let your AI assistant pay for web content in USDC (x402) within a budget you set.",
+  "repository": {
+    "url": "https://github.com/P2Flux/mcp",
+    "source": "github"
+  },
+  "version": "0.3.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@p2flux/mcp",
+      "version": "0.3.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "P2FLUX_NETWORK",
+          "description": "test = Base Sepolia (free test money), live = Base with real USDC",
+          "default": "test"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://agent.p2flux.com/mcp"
+    }
+  ]
+}
