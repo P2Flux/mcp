@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "p2flux",
   "display_name": "P2Flux - pay for web content",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Let Claude find and pay for web pages that sell to AI agents, in USDC, within limits you set. The wallet stays on your computer.",
   "long_description": "Some websites ask AI assistants to pay a few cents to read an article or use their data (the open x402 standard). This extension gives Claude a small wallet on your computer and lets it pay those sites for you - never more than the limits you set here. P2Flux never holds your money or your key. Start by asking Claude: \"Set up my P2Flux wallet.\"",
   "author": { "name": "P2Flux", "url": "https://p2flux.com" },

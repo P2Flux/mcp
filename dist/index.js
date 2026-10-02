@@ -15,7 +15,7 @@ if (process.argv[2] === 'export-key') {
     process.stdout.write(`${exportKey(config)}\n`);
     process.exit(0);
 }
-const server = new McpServer({ name: 'p2flux', version: '0.3.0' });
+const server = new McpServer({ name: 'p2flux', version: '0.3.1' });
 /* Above the budget the person is asked in their own app (MCP elicitation) - a dialog the assistant
  * cannot answer for them. An app that cannot show one gets null: the payment is refused, as before. */
 const ask = async (message) => {

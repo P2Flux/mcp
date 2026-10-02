@@ -131,7 +131,7 @@ const server = createServer(async (req, res) => {
     if (path === '/mcp') {
       if (req.method !== 'POST') return json(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null })
       // Stateless: nothing about a conversation is kept here but the payment requests, found by their id.
-      const mcp = new McpServer({ name: 'p2flux', version: '0.3.0' })
+      const mcp = new McpServer({ name: 'p2flux', version: '0.3.1' })
       for (const [name, tool] of Object.entries(remoteTools(addressOf(req)))) {
         mcp.registerTool(name, { description: tool.description, inputSchema: tool.input }, (async (args: Record<string, unknown>) => {
           try {
