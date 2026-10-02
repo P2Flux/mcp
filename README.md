@@ -22,6 +22,8 @@ If the computer is lost, the wallet on it is lost. Keep small amounts.
 
 ```bash
 claude mcp add p2flux -e P2FLUX_NETWORK=test -- npx -y @p2flux/mcp
+# real USDC on Base:
+claude mcp add p2flux -e P2FLUX_NETWORK=live -- npx -y @p2flux/mcp
 ```
 
 | Variable | Default | Meaning |
@@ -30,7 +32,19 @@ claude mcp add p2flux -e P2FLUX_NETWORK=test -- npx -y @p2flux/mcp
 | `P2FLUX_MAX_PER_PAYMENT` | `0.50` | most for one page |
 | `P2FLUX_MAX_PER_DAY` | `5` | most in 24 hours |
 | `P2FLUX_MAX_PREPAID` | `1` | most to put aside at one site; `0` = pay every page on its own |
-| `P2FLUX_MCP_DIR` | `~/.p2flux-mcp` | where the wallet and the spending log are kept |
+| `P2FLUX_MAX_CONFIRMED` | `1000` | most for one payment you confirm in a dialog (see below) |
+| `P2FLUX_MCP_DIR` | `~/.p2flux-mcp` | where the wallet, the spending log and access tokens are kept |
+| `P2FLUX_API_URL` | P2Flux API of the network | another P2Flux API (https, or http://localhost) |
+| `P2FLUX_RPC_URL` | public Base RPC | your own Base RPC (https, or http://localhost) |
+
+`P2FLUX_MAX_CONFIRMED`, `P2FLUX_API_URL` and `P2FLUX_RPC_URL` are set in the environment only. The
+Claude Desktop form does not show them.
+
+Access tokens a site gives for a subscription are kept in `access.json` in `P2FLUX_MCP_DIR`, per
+site, until they expire. Delete that file to forget them all.
+
+Listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.P2Flux/mcp`, on
+Smithery and on Glama.
 
 ## What it does, and does not
 
@@ -71,6 +85,18 @@ npx @anthropic-ai/mcpb pack . p2flux.mcpb
 holds **no wallet, no balance and no history**, and needs no login. Tools: `find_paid_content`,
 `check_price`, `request_paid_page`, `get_paid_page`.
 
+### Hosted server
+
+P2Flux runs this server. Add it as a custom connector in claude.ai or ChatGPT (developer mode),
+authentication: none.
+
+- Real USDC on Base: `https://agent.p2flux.com/mcp`
+- Test money on Base Sepolia: `https://agent-test.p2flux.com/mcp`
+
+Each payment is approved by you in your own browser wallet. The server never holds your money or a key.
+
+### How it works
+
 1. The assistant asks for a paid page. It gets a link, and shows it to you.
 2. You open the link. The page shows the amount, the page and the seller's address. You approve in
    your own wallet (Coinbase Wallet, MetaMask…): one signature for exactly that amount, no network fee.
@@ -83,12 +109,27 @@ budget as `max_price`, and the approval page shows the amount and what the site 
 a box to tick before the wallet opens. `P2FLUX_REMOTE_SECRET` (32+ characters) seals access tokens to
 their site across restarts. The server reads only public https websites.
 
+### Run your own
+
 ```bash
 P2FLUX_PUBLIC_URL=https://agent.example.com P2FLUX_NETWORK=test PORT=8787 npx -p @p2flux/mcp p2flux-mcp-remote
 ```
 
 Put it behind https (nginx) with `P2FLUX_TRUST_PROXY=1`, then add `https://agent.example.com/mcp` as a
 custom connector in claude.ai or ChatGPT (developer mode), authentication: none.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `P2FLUX_PUBLIC_URL` | (required) | the https address this server is reachable at |
+| `P2FLUX_NETWORK` | `test` | `test` = Base Sepolia, `live` = Base with real USDC |
+| `P2FLUX_REMOTE_MAX_PRICE` | `1000` | most for one payment |
+| `P2FLUX_REMOTE_CONFIRM_ABOVE` | `5` | above this the person is asked twice |
+| `P2FLUX_REMOTE_SECRET` | (random per start) | 32+ characters; keeps access tokens valid across restarts |
+| `P2FLUX_TRUST_PROXY` | off | `1` behind nginx: the client address comes from `X-Forwarded-For` |
+| `P2FLUX_REMOTE_ALLOW_LOCAL` | off | `1` lets the server read http://localhost pages; test money only |
+| `P2FLUX_API_URL` | P2Flux API of the network | another P2Flux API |
+| `P2FLUX_RPC_URL` | public Base RPC | your own Base RPC |
+| `HOST`, `PORT` | `127.0.0.1`, `8787` | where it listens |
 
 Limits today: a browser wallet extension is needed (no WalletConnect / phone wallets yet); one
 approval per page (no prepaid balance).
