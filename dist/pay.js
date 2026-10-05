@@ -138,8 +138,28 @@ export async function checkPrice(config, input, f = fetch) {
     if (!exact)
         throw new Error(`this page asks for payment, but not in USDC on ${config.network.label} - it cannot be paid from this wallet`);
     const says = offerText(res.headers.get('payment-required'));
-    return { free: false, price: fromUnits(exact.units), prepaid: offers.some((o) => o.scheme === 'batch-settlement'), offers, ...(says ? { says } : {}) };
+    const batch = prepaidOffer(offers, exact.units);
+    return { free: false, price: fromUnits(exact.units), prepaid: !!batch, ...(batch && batch.units < exact.units ? { prepaidPrice: fromUnits(batch.units) } : {}), offers, ...(says ? { says } : {}) };
 }
+/**
+ * The deposit multiplier for one payment. The library deposits the seller's minimum (P2Flux: 1 USDC)
+ * but never more than price x multiplier - so with the usual 3 a 0.10 page deposited 0.30 and a 0.001
+ * page 0.003, both refused, and every page fell back to paying one by one. Large enough here for the
+ * minimum; how much may leave the wallet is still decided by `depositFor`.
+ */
+export const depositMultiplier = (price, minDeposit) => price > 0n && minDeposit > price * 3n ? Number((minDeposit + price - 1n) / price) : 3;
+/** The deposit for a prepaid balance, or false when it would pass the prepaid cap or what is left of today. */
+export function depositFor(ctx, maxPrepaid, leftToday) {
+    // Never under the seller's minimum: a smaller deposit is refused.
+    const min = String(ctx.paymentRequirements.extra?.minDeposit ?? '');
+    let deposit = BigInt(ctx.depositAmount);
+    if (/^\d{1,30}$/.test(min) && BigInt(min) > deposit)
+        deposit = BigInt(min);
+    return deposit > maxPrepaid || deposit > leftToday ? false : deposit;
+}
+/** The prepaid offer, if any: a site may ask less from a prepaid balance (P2Flux: sub-cent prices),
+ * never more than per page - a dearer one is ignored. */
+const prepaidOffer = (offers, perPage) => offers.find((o) => o.scheme === 'batch-settlement' && o.units <= perPage);
 export async function readPaid(config, input, maxPrice, f = fetch, now = Date.now, ask) {
     const url = checkedUrl(config, input);
     const tokens = accessTokens(config, url.host, now());
@@ -176,25 +196,25 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
         confirmed = true;
     }
     const signer = toClientEvmSigner(account(config), chainClient(config));
-    const paying = (scheme, onDeposit) => {
+    const paying = (scheme, amount, onDeposit, minDeposit = 0n) => {
         // The library's own cap (1 USDC by default) set to exactly the price checked above: no more, and
         // nothing less that would stop a payment the budget or the person allowed.
-        const client = new x402Client().setSpendControls({ maxAmountPerPayment: false, allowedAssets: [{ network: config.network.caip, asset: config.network.usdc, maxAmountPerPayment: price.toString() }] });
+        const client = new x402Client().setSpendControls({ maxAmountPerPayment: false, allowedAssets: [{ network: config.network.caip, asset: config.network.usdc, maxAmountPerPayment: amount.toString() }] });
         // The client may sign this scheme, on this network, in USDC, at the price that was checked. Nothing else.
-        client.registerPolicy((_version, requirements) => requirements.filter((r) => r.scheme === scheme && r.network === config.network.caip && String(r.asset).toLowerCase() === config.network.usdc.toLowerCase() && r.amount === price.toString()));
+        client.registerPolicy((_version, requirements) => requirements.filter((r) => r.scheme === scheme && r.network === config.network.caip && String(r.asset).toLowerCase() === config.network.usdc.toLowerCase() && r.amount === amount.toString()));
         if (scheme === 'exact')
             client.register(config.network.caip, new ExactEvmScheme(signer));
         else {
             client.register(config.network.caip, new BatchSettlementEvmScheme(signer, {
                 storage: new FileClientChannelStorage({ directory: join(config.dir, 'channels') }),
-                depositPolicy: { depositMultiplier: 3 },
+                depositPolicy: { depositMultiplier: depositMultiplier(amount, minDeposit) },
                 // A deposit is money leaving the wallet: it must fit the prepaid cap and what is left of today.
                 depositStrategy: (ctx) => {
-                    const deposit = BigInt(ctx.depositAmount);
-                    if (deposit > config.maxPrepaid || spentToday(entries(config), now()) + deposit > config.perDay)
+                    const deposit = depositFor(ctx, config.maxPrepaid, config.perDay - spentToday(entries(config), now()));
+                    if (deposit === false)
                         return false;
                     onDeposit?.(deposit);
-                    return undefined;
+                    return deposit.toString();
                 },
             }));
         }
@@ -216,7 +236,7 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
         }
     };
     // Prepaid first when the site offers it and the owner allows it: no transaction per page.
-    const batch = offers.find((o) => o.scheme === 'batch-settlement' && o.units === price);
+    const batch = prepaidOffer(offers, price);
     if (!confirmed && batch && config.maxPrepaid > 0n && batch.minDeposit <= config.maxPrepaid) {
         let deposited = 0n;
         // A deposit is written down the moment it is decided, before it is signed.
@@ -227,17 +247,17 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
         };
         const depositEntry = (transaction) => deposited > 0n ? [{ at: now(), url: url.toString(), units: deposited.toString(), kind: 'deposit', ...(transaction ? { transaction } : {}) }] : [];
         const close = (list, voucher) => {
-            const outcome = voucher ? [...list, { at: now(), url: url.toString(), units: price.toString(), kind: 'voucher' }] : list;
+            const outcome = voucher ? [...list, { at: now(), url: url.toString(), units: batch.units.toString(), kind: 'voucher' }] : list;
             if (settleDeposit)
                 settleDeposit(outcome);
             else if (outcome.length)
                 reserve(config, url.toString(), 0n, now())(outcome);
         };
         try {
-            const res = await paying('batch-settlement', onDeposit)(url);
+            const res = await paying('batch-settlement', batch.units, onDeposit, batch.minDeposit)(url);
             if (res.ok) {
                 close(depositEntry(transactionOf(res)), true);
-                return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(price), how: 'prepaid balance', ...(deposited > 0n ? { deposited: fromUnits(deposited) } : {}), ...accessOf(res) };
+                return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(batch.units), how: 'prepaid balance', ...(deposited > 0n ? { deposited: fromUnits(deposited) } : {}), ...accessOf(res) };
             }
             await res.body?.cancel();
             // Whether a signed deposit went out is not known here: it stays counted.
@@ -253,7 +273,7 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
     const settle = reserve(config, url.toString(), price, now());
     let res;
     try {
-        res = await paying('exact')(url);
+        res = await paying('exact', price)(url);
     }
     catch (err) {
         // Nothing was signed if the client refused the offer; anything else is unknown and stays counted.
