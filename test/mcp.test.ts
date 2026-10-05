@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fromUnits, loadConfig, toUnits } from '../src/config.js'
 import { entries, refusal, reserve, spentToday } from '../src/ledger.js'
-import { checkPrice, checkedUrl, offersFrom, readPaid, toText } from '../src/pay.js'
+import { checkPrice, depositFor, checkedUrl, offersFrom, readPaid, toText } from '../src/pay.js'
 import { tools } from '../src/tools.js'
 import { account, walletExists } from '../src/wallet.js'
 
@@ -301,4 +301,18 @@ test('BUDGET: inside it pays; above it the person is asked - declined pays nothi
   const before = asked.length
   await assert.rejects(readPaid(c, 'https://tips.example/q', 1_000_000n, shop('9000000'), Date.now, say(true)), /above the maximum of 1.00/)
   assert.equal(asked.length, before, 'the assistant\'s own max_price is never overridden by asking')
+})
+
+test('deposit: three payments, but at least the seller\'s minimum, within the caps', () => {
+  const req = (minDeposit?: string) => ({ extra: minDeposit === undefined ? {} : { minDeposit } })
+  // 0.10 USDC a request: 3x is 0.30, under P2Flux's 1 USDC minimum - the minimum is deposited.
+  assert.equal(depositFor({ depositAmount: '300000', paymentRequirements: req('1000000') }, 5_000_000n, 10_000_000n), 1_000_000n)
+  // 0.50 a request: 3x (1.50) is already above it.
+  assert.equal(depositFor({ depositAmount: '1500000', paymentRequirements: req('1000000') }, 5_000_000n, 10_000_000n), 1_500_000n)
+  assert.equal(depositFor({ depositAmount: '300000', paymentRequirements: req() }, 5_000_000n, 10_000_000n), 300_000n, 'no minimum stated')
+  assert.equal(depositFor({ depositAmount: '300000', paymentRequirements: req('junk') }, 5_000_000n, 10_000_000n), 300_000n)
+  // The minimum still has to fit the prepaid cap, today's limit and the seller's maximum.
+  assert.equal(depositFor({ depositAmount: '300000', paymentRequirements: req('1000000') }, 900_000n, 10_000_000n), false)
+  assert.equal(depositFor({ depositAmount: '300000', paymentRequirements: req('1000000') }, 5_000_000n, 999_999n), false)
+  assert.equal(depositFor({ depositAmount: '300000', maxDeposit: '500000', paymentRequirements: req('1000000') }, 5_000_000n, 10_000_000n), false)
 })

@@ -144,6 +144,24 @@ export async function checkPrice(config: Config, input: string, f: Fetch = fetch
   return { free: false, price: fromUnits(exact.units), prepaid: offers.some((o) => o.scheme === 'batch-settlement'), offers, ...(says ? { says } : {}) }
 }
 
+/**
+ * The deposit for a prepaid balance: three payments' worth, but never under the seller's minimum
+ * (`extra.minDeposit`; P2Flux: 1 USDC) - a smaller one is refused, and every cheap request would fall
+ * back to paying one by one. False when it would pass the seller's maximum, the prepaid cap or what
+ * is left of today's limit.
+ */
+export function depositFor(
+  ctx: { depositAmount: string; maxDeposit?: string; paymentRequirements: { extra?: unknown } },
+  maxPrepaid: bigint,
+  leftToday: bigint,
+): bigint | false {
+  const min = String((ctx.paymentRequirements.extra as { minDeposit?: unknown } | undefined)?.minDeposit ?? '')
+  let deposit = BigInt(ctx.depositAmount)
+  if (/^\d{1,30}$/.test(min) && BigInt(min) > deposit) deposit = BigInt(min)
+  if (ctx.maxDeposit !== undefined && deposit > BigInt(ctx.maxDeposit)) return false
+  return deposit > maxPrepaid || deposit > leftToday ? false : deposit
+}
+
 export type Read = { text: string; paid: string; how: 'free' | 'per page' | 'prepaid balance'; transaction?: string; deposited?: string; accessUntil?: string; accessSent?: true }
 
 /** Read a URL, paying if it asks - within `maxPrice`, the limit per payment and the daily limit. */
@@ -199,10 +217,10 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
           depositPolicy: { depositMultiplier: 3 },
           // A deposit is money leaving the wallet: it must fit the prepaid cap and what is left of today.
           depositStrategy: (ctx) => {
-            const deposit = BigInt(ctx.depositAmount)
-            if (deposit > config.maxPrepaid || spentToday(entries(config), now()) + deposit > config.perDay) return false
+            const deposit = depositFor(ctx, config.maxPrepaid, config.perDay - spentToday(entries(config), now()))
+            if (deposit === false) return false
             onDeposit?.(deposit)
-            return undefined
+            return deposit.toString()
           },
         }),
       )
