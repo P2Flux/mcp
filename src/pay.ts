@@ -125,7 +125,8 @@ export function offerText(header: string | null): string | undefined {
   }
 }
 
-export type Price = { free: true } | { free: false; price: string; prepaid: boolean; offers: Offer[]; says?: string }
+/** `price` is per page (on chain); `prepaidPrice`, when lower, what a page costs from a prepaid balance. */
+export type Price = { free: true } | { free: false; price: string; prepaid: boolean; prepaidPrice?: string; offers: Offer[]; says?: string }
 
 /** What a URL costs. Pays nothing. */
 export async function checkPrice(config: Config, input: string, f: Fetch = fetch): Promise<Price> {
@@ -141,7 +142,8 @@ export async function checkPrice(config: Config, input: string, f: Fetch = fetch
   const exact = offers.find((o) => o.scheme === 'exact')
   if (!exact) throw new Error(`this page asks for payment, but not in USDC on ${config.network.label} - it cannot be paid from this wallet`)
   const says = offerText(res.headers.get('payment-required'))
-  return { free: false, price: fromUnits(exact.units), prepaid: offers.some((o) => o.scheme === 'batch-settlement'), offers, ...(says ? { says } : {}) }
+  const batch = prepaidOffer(offers, exact.units)
+  return { free: false, price: fromUnits(exact.units), prepaid: !!batch, ...(batch && batch.units < exact.units ? { prepaidPrice: fromUnits(batch.units) } : {}), offers, ...(says ? { says } : {}) }
 }
 
 /**
@@ -161,6 +163,10 @@ export function depositFor(
   if (ctx.maxDeposit !== undefined && deposit > BigInt(ctx.maxDeposit)) return false
   return deposit > maxPrepaid || deposit > leftToday ? false : deposit
 }
+
+/** The prepaid offer, if any: a site may ask less from a prepaid balance (P2Flux: sub-cent prices),
+ * never more than per page - a dearer one is ignored. */
+const prepaidOffer = (offers: Offer[], perPage: bigint) => offers.find((o) => o.scheme === 'batch-settlement' && o.units <= perPage)
 
 export type Read = { text: string; paid: string; how: 'free' | 'per page' | 'prepaid balance'; transaction?: string; deposited?: string; accessUntil?: string; accessSent?: true }
 
@@ -200,13 +206,13 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
   }
 
   const signer = toClientEvmSigner(account(config), chainClient(config) as never)
-  const paying = (scheme: 'exact' | 'batch-settlement', onDeposit?: (units: bigint) => void) => {
+  const paying = (scheme: 'exact' | 'batch-settlement', amount: bigint, onDeposit?: (units: bigint) => void) => {
     // The library's own cap (1 USDC by default) set to exactly the price checked above: no more, and
     // nothing less that would stop a payment the budget or the person allowed.
-    const client = new x402Client().setSpendControls({ maxAmountPerPayment: false, allowedAssets: [{ network: config.network.caip, asset: config.network.usdc, maxAmountPerPayment: price.toString() }] })
+    const client = new x402Client().setSpendControls({ maxAmountPerPayment: false, allowedAssets: [{ network: config.network.caip, asset: config.network.usdc, maxAmountPerPayment: amount.toString() }] })
     // The client may sign this scheme, on this network, in USDC, at the price that was checked. Nothing else.
     client.registerPolicy((_version, requirements) =>
-      requirements.filter((r) => r.scheme === scheme && r.network === config.network.caip && String(r.asset).toLowerCase() === config.network.usdc.toLowerCase() && r.amount === price.toString()),
+      requirements.filter((r) => r.scheme === scheme && r.network === config.network.caip && String(r.asset).toLowerCase() === config.network.usdc.toLowerCase() && r.amount === amount.toString()),
     )
     if (scheme === 'exact') client.register(config.network.caip, new ExactEvmScheme(signer))
     else {
@@ -243,7 +249,7 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
   }
 
   // Prepaid first when the site offers it and the owner allows it: no transaction per page.
-  const batch = offers.find((o) => o.scheme === 'batch-settlement' && o.units === price)
+  const batch = prepaidOffer(offers, price)
   if (!confirmed && batch && config.maxPrepaid > 0n && batch.minDeposit <= config.maxPrepaid) {
     let deposited = 0n
     // A deposit is written down the moment it is decided, before it is signed.
@@ -255,15 +261,15 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
     const depositEntry = (transaction?: string): Entry[] =>
       deposited > 0n ? [{ at: now(), url: url.toString(), units: deposited.toString(), kind: 'deposit', ...(transaction ? { transaction } : {}) }] : []
     const close = (list: Entry[], voucher: boolean) => {
-      const outcome = voucher ? [...list, { at: now(), url: url.toString(), units: price.toString(), kind: 'voucher' as const }] : list
+      const outcome = voucher ? [...list, { at: now(), url: url.toString(), units: batch.units.toString(), kind: 'voucher' as const }] : list
       if (settleDeposit) (settleDeposit as ReturnType<typeof reserve>)(outcome)
       else if (outcome.length) reserve(config, url.toString(), 0n, now())(outcome)
     }
     try {
-      const res = await paying('batch-settlement', onDeposit)(url)
+      const res = await paying('batch-settlement', batch.units, onDeposit)(url)
       if (res.ok) {
         close(depositEntry(transactionOf(res)), true)
-        return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(price), how: 'prepaid balance', ...(deposited > 0n ? { deposited: fromUnits(deposited) } : {}), ...accessOf(res) }
+        return { text: toText(await bodyOf(res), res.headers.get('content-type') ?? ''), paid: fromUnits(batch.units), how: 'prepaid balance', ...(deposited > 0n ? { deposited: fromUnits(deposited) } : {}), ...accessOf(res) }
       }
       await res.body?.cancel()
       // Whether a signed deposit went out is not known here: it stays counted.
@@ -278,7 +284,7 @@ export async function readPaid(config: Config, input: string, maxPrice: bigint |
   const settle = reserve(config, url.toString(), price, now())
   let res: Response
   try {
-    res = await paying('exact')(url)
+    res = await paying('exact', price)(url)
   } catch (err) {
     // Nothing was signed if the client refused the offer; anything else is unknown and stays counted.
     if (/No network\/scheme registered|no payment requirements|Failed to create payment/i.test(String((err as Error).message))) settle([])

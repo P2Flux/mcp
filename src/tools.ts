@@ -79,7 +79,7 @@ export function tools(config: Config, f: Fetch = fetch, ask?: Ask) {
       run: async ({ url }: { url: string }) => {
         const p = await checkPrice(config, url, f)
         if (p.free) return 'This page is free to read.'
-        return `This page costs ${p.price} USDC.${p.prepaid ? ' It can also be paid from a prepaid balance.' : ''}` + (p.says ? `\nThe site says what it buys (the site's own words): "${p.says}"` : '')
+        return `This page costs ${p.price} USDC.${p.prepaidPrice ? ` From a prepaid balance it costs ${p.prepaidPrice} USDC.` : p.prepaid ? ' It can also be paid from a prepaid balance.' : ''}` + (p.says ? `\nThe site says what it buys (the site's own words): "${p.says}"` : '')
       },
     },
     read_paid: {

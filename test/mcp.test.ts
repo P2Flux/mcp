@@ -144,6 +144,12 @@ test('check_price reads the price and pays nothing', async () => {
   if (!p.free) assert.deepEqual([p.price, p.prepaid], ['0.05', true])
   assert.deepEqual(calls, ['GET https://news.example/a plain'])
   await assert.rejects(checkPrice(c, 'https://news.example/a', site({ accepts: [offer({ network: 'eip155:1' })] })), /cannot be paid from this wallet/)
+  // A sub-cent page: 0.01 per page (on chain), 0.0005 from a prepaid balance.
+  const cheap = await checkPrice(c, 'https://news.example/a', site({ accepts: [offer({ amount: '10000' }), offer({ scheme: 'batch-settlement', amount: '500' })] }))
+  if (!cheap.free) assert.deepEqual([cheap.price, cheap.prepaidPrice], ['0.01', '0.0005'])
+  // A prepaid offer dearer than per page is not one.
+  const odd = await checkPrice(c, 'https://news.example/a', site({ accepts: [offer(), offer({ scheme: 'batch-settlement', amount: '60000' })] }))
+  if (!odd.free) assert.deepEqual([odd.prepaid, odd.prepaidPrice], [false, undefined])
 })
 
 test('a free page is read for free, as text', async () => {
