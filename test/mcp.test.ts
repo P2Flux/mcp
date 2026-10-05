@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fromUnits, loadConfig, toUnits } from '../src/config.js'
 import { entries, refusal, reserve, spentToday } from '../src/ledger.js'
-import { checkPrice, depositFor, checkedUrl, offersFrom, readPaid, toText } from '../src/pay.js'
+import { checkPrice, depositFor, depositMultiplier, checkedUrl, offersFrom, readPaid, toText } from '../src/pay.js'
 import { tools } from '../src/tools.js'
 import { account, walletExists } from '../src/wallet.js'
 
@@ -320,5 +320,10 @@ test('deposit: three payments, but at least the seller\'s minimum, within the ca
   // The minimum still has to fit the prepaid cap, today's limit and the seller's maximum.
   assert.equal(depositFor({ depositAmount: '300000', paymentRequirements: req('1000000') }, 900_000n, 10_000_000n), false)
   assert.equal(depositFor({ depositAmount: '300000', paymentRequirements: req('1000000') }, 5_000_000n, 999_999n), false)
-  assert.equal(depositFor({ depositAmount: '300000', maxDeposit: '500000', paymentRequirements: req('1000000') }, 5_000_000n, 10_000_000n), false)
+  // The library caps a deposit at price x multiplier: the multiplier reaches the minimum.
+  assert.equal(depositMultiplier(100_000n, 1_000_000n), 10)
+  assert.equal(depositMultiplier(1_000n, 1_000_000n), 1000)
+  assert.equal(depositMultiplier(300n, 1_000_000n), 3334, 'rounded up')
+  assert.equal(depositMultiplier(500_000n, 1_000_000n), 3)
+  assert.equal(depositMultiplier(50_000n, 0n), 3)
 })

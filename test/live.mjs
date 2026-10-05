@@ -72,7 +72,7 @@ await s.client.close()
 // --- the daily limit, across restarts ---------------------------------------------------------------
 s = await connect({ P2FLUX_MAX_PREPAID: '0', P2FLUX_MAX_PER_DAY: '1.07' })
 const over = await s.call('read_paid', { url: posts[3].url })
-check('10 the daily limit holds across restarts: 1.05 spent, 0.05 more would pass 1.07', over.error && /daily limit/.test(over.text) && !over.text.includes('MCP-SECRET'), over.text)
+check('10 the daily limit holds across restarts: 1.05 spent, 0.05 more would pass 1.07', over.error && /daily limit|a day \(1\.05 spent/.test(over.text) && /Nothing was paid/.test(over.text) && !over.text.includes('MCP-SECRET'), over.text)
 const report = await s.call('spending_report')
 check('11 spending_report lists the payment, the deposit and the prepaid pages', /Total that left the wallet: 1\.05 USDC/.test(report.text) && /prepaid deposit/.test(report.text) && /from prepaid balance/.test(report.text), report.text)
 const found = await s.call('find_paid_content', { query: '' })
