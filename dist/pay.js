@@ -36,6 +36,36 @@ export function checkedUrl(config, input) {
         throw new Error('addresses with a user name or password are not paid');
     return url;
 }
+/** A requirement whose transfer is the plain EIP-3009 authorization (the default), not Permit2. */
+const eip3009Only = (r) => {
+    const method = r.extra?.assetTransferMethod;
+    return method === undefined || method === 'eip3009';
+};
+/**
+ * A 402 with its `extensions` removed and Permit2 offers dropped, before the x402 library reads it:
+ * extensions are where a site asks the client to sign extra things (an unlimited ERC-20 approval for
+ * gas sponsoring, say), and nothing a page says may widen what this wallet signs beyond the price.
+ */
+const withoutExtensions = (f) => async (input, init) => {
+    const res = await f(input, init);
+    if (res.status !== 402)
+        return res;
+    const header = res.headers.get('payment-required');
+    if (!header)
+        return res;
+    try {
+        const doc = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+        delete doc.extensions;
+        if (Array.isArray(doc.accepts))
+            doc.accepts = doc.accepts.filter((a) => a && typeof a === 'object' && eip3009Only(a));
+        const headers = new Headers(res.headers);
+        headers.set('payment-required', Buffer.from(JSON.stringify(doc)).toString('base64'));
+        return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+    }
+    catch {
+        return res;
+    }
+};
 /** The offers of a 402 this wallet may consider. Anything malformed, on another network or in another token is dropped. */
 export function offersFrom(config, header) {
     if (!header || header.length > 65_536)
@@ -201,7 +231,14 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
         // nothing less that would stop a payment the budget or the person allowed.
         const client = new x402Client().setSpendControls({ maxAmountPerPayment: false, allowedAssets: [{ network: config.network.caip, asset: config.network.usdc, maxAmountPerPayment: amount.toString() }] });
         // The client may sign this scheme, on this network, in USDC, at the price that was checked. Nothing else.
-        client.registerPolicy((_version, requirements) => requirements.filter((r) => r.scheme === scheme && r.network === config.network.caip && String(r.asset).toLowerCase() === config.network.usdc.toLowerCase() && r.amount === amount.toString()));
+        client.registerPolicy((_version, requirements) => requirements.filter((r) => r.scheme === scheme &&
+            r.network === config.network.caip &&
+            String(r.asset).toLowerCase() === config.network.usdc.toLowerCase() &&
+            r.amount === amount.toString() &&
+            /* Only the authorization this wallet understands: a transfer signed for exactly this price.
+             * `permit2` would have the library set a standing (unlimited) Permit2 approval first - more
+             * than the price shown, and not something a web page gets to ask for. */
+            eip3009Only(r)));
         if (scheme === 'exact')
             client.register(config.network.caip, new ExactEvmScheme(signer));
         else {
@@ -218,7 +255,7 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
                 },
             }));
         }
-        const signedFetch = named(f, tokens);
+        const signedFetch = withoutExtensions(named(f, tokens));
         return wrapFetchWithPayment(signedFetch, client);
     };
     // A payment that bought a period (a subscription) is answered with a token for later requests.

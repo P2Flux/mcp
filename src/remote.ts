@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createPublicClient, http } from 'viem'
 import { z } from 'zod'
 import { loadConfig, toUnits } from './config.js'
-import { createRemote } from './remote/core.js'
+import { callerKey, createRemote } from './remote/core.js'
 import { publicFetch } from './remote/net.js'
 import { PAGE_HTML, PAGE_JS } from './remote/page.js'
 import { tools } from './tools.js'
@@ -90,7 +90,7 @@ const remoteTools = (owner: string) => ({
 // ponytail: one process, requests counted per network address in memory; behind a proxy set P2FLUX_TRUST_PROXY=1 (last X-Forwarded-For entry).
 const hits = new Map<string, { n: number; until: number }>()
 const addressOf = (req: IncomingMessage) =>
-  (env.P2FLUX_TRUST_PROXY === '1' ? String(req.headers['x-forwarded-for'] ?? '').split(',').pop()?.trim() : '') || req.socket.remoteAddress || ''
+  callerKey((env.P2FLUX_TRUST_PROXY === '1' ? String(req.headers['x-forwarded-for'] ?? '').split(',').pop()?.trim() : '') || req.socket.remoteAddress || '')
 const limited = (req: IncomingMessage, max: number) => {
   const key = addressOf(req)
   const t = Date.now()
@@ -131,7 +131,7 @@ const server = createServer(async (req, res) => {
     if (path === '/mcp') {
       if (req.method !== 'POST') return json(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null })
       // Stateless: nothing about a conversation is kept here but the payment requests, found by their id.
-      const mcp = new McpServer({ name: 'p2flux', version: '0.3.2' })
+      const mcp = new McpServer({ name: 'p2flux', version: '0.3.3' })
       for (const [name, tool] of Object.entries(remoteTools(addressOf(req)))) {
         mcp.registerTool(name, { description: tool.description, inputSchema: tool.input }, (async (args: Record<string, unknown>) => {
           try {

@@ -327,3 +327,13 @@ test('deposit: three payments, but at least the seller\'s minimum, within the ca
   assert.equal(depositMultiplier(500_000n, 1_000_000n), 3)
   assert.equal(depositMultiplier(50_000n, 0n), 3)
 })
+
+test('a site cannot steer the wallet into Permit2 or an approval: such offers are dropped before anything is signed', async () => {
+  const c = cfg()
+  account(c, true)
+  const calls: string[] = []
+  const permit2 = { accepts: [offer({ extra: { name: 'USDC', version: '2', assetTransferMethod: 'permit2' } })], extensions: { erc20ApprovalGasSponsoring: { info: {} } } }
+  await assert.rejects(readPaid(c, 'https://news.example/a', null, site(permit2, calls)), /could not be made|refused|no payment/i)
+  assert.equal(calls.filter((l) => l.includes('PAID')).length, 0, 'nothing was signed')
+  assert.equal(entries(c).length, 0, 'nothing was reserved')
+})

@@ -17,6 +17,16 @@ import type { Fetched } from './net.js'
  * What this server holds: a signature that can move one amount to one seller, for seconds. No keys,
  * no balances.
  */
+/** One caller = one IPv4 address or one IPv6 /64: a single host is routinely handed a whole /64. */
+export const callerKey = (address: string): string => {
+  const ip = address.replace(/^::ffff:/i, '')
+  if (!ip.includes(':')) return ip
+  const [head = '', tail = ''] = ip.split('::')
+  const groups = head.split(':').filter(Boolean)
+  const rest = tail.split(':').filter(Boolean)
+  const full = [...groups, ...Array(Math.max(0, 8 - groups.length - rest.length)).fill('0'), ...rest]
+  return full.slice(0, 4).map((g) => g.toLowerCase().padStart(4, '0')).join(':') + '::/64'
+}
 const USER_AGENT = 'P2Flux-MCP/0.3 (remote; +https://p2flux.com)'
 const TTL_MS = 15 * 60_000
 const MAX_OPEN = 1_000
@@ -73,7 +83,6 @@ export function createRemote(deps: RemoteDeps) {
   const config = { network: deps.network } as Config
   const sweep = () => {
     for (const [id, p] of open) if (now() - p.created > TTL_MS) open.delete(id)
-    while (open.size >= MAX_OPEN) open.delete(open.keys().next().value as string)
   }
   const get = (id: string): Pending => {
     const p = /^[0-9a-f]{32}$/.test(id) ? open.get(id) : undefined
@@ -162,6 +171,9 @@ export function createRemote(deps: RemoteDeps) {
         return bare.status === 402 ? { free: true as const, text: o.text } : { free: true as const }
       }
       sweep()
+      /* Full means full: a request that was approved and paid keeps its result until it expires. Evicting
+       * it to make room would lose a page somebody has already paid for - which a flood could force. */
+      if (open.size >= MAX_OPEN) throw new Error('too many payment requests are open right now; try again in a few minutes')
       let mine = 0
       for (const p of open.values()) if (p.owner === owner && p.state === 'waiting') mine++
       if (mine >= MAX_OPEN_PER_OWNER) throw new Error('too many payment requests are waiting for approval; approve or let some expire (15 minutes) first')

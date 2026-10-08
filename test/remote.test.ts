@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { loadConfig } from '../src/config.js'
-import { createRemote, type RemoteDeps } from '../src/remote/core.js'
+import { callerKey, createRemote, type RemoteDeps } from '../src/remote/core.js'
 import { isPublicAddress, publicFetch, type Fetched } from '../src/remote/net.js'
 
 const network = loadConfig({} as never).network
@@ -254,4 +254,23 @@ test('a large payment (a subscription) needs the person twice: a budget given to
   const signed = auth(w, { value: '499000000' })
   await assert.rejects(w.remote.approve(id, signed), /confirm on the page/)
   assert.deepEqual(await w.remote.approve(id, { ...signed, confirmed: true }), { paid: true })
+})
+
+// --- review 2026-10-08 -------------------------------------------------------------------------------
+
+test('callerKey: an IPv6 caller is its /64, an IPv4 caller is itself', () => {
+  assert.equal(callerKey('203.0.113.9'), '203.0.113.9')
+  assert.equal(callerKey('::ffff:203.0.113.9'), '203.0.113.9')
+  assert.equal(callerKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd'), '2001:0db8:0001:0002::/64')
+  assert.equal(callerKey('2001:db8:1:2::9'), '2001:0db8:0001:0002::/64')
+  assert.equal(callerKey('2001:db8::1'), '2001:0db8:0000:0000::/64')
+})
+
+test('a full desk refuses new requests instead of evicting ones that are open or paid', async () => {
+  const w = world()
+  const first = await opened(w)
+  // 999 more from 50 callers: the table is full of other people's waiting requests.
+  for (let n = 1; n < 1000; n++) await w.remote.request(URL_, undefined, `caller-${n % 50}`)
+  await assert.rejects(w.remote.request(URL_, undefined, 'one-more'), /too many payment requests are open/)
+  assert.equal(w.remote.data(first.id).price, '0.05', 'the first request is still there')
 })
