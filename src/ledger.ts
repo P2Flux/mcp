@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, statSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { Config } from './config.js'
@@ -28,14 +28,47 @@ export function entries(config: Config): Entry[] {
   return parsed as Entry[]
 }
 
+const DAY_MS = 86_400_000
+
+/* Two servers on one wallet (two assistants on one machine) must not read, add and write the log at
+ * once: each takes this lock first. A lock older than ten seconds belongs to a process that died. */
+const LOCK_STALE_MS = 10_000
+function withLock<T>(config: Config, fn: () => T): T {
+  mkdirSync(config.dir, { recursive: true, mode: 0o700 })
+  const lock = `${path(config)}.lock`
+  const deadline = Date.now() + 5_000
+  for (;;) {
+    try {
+      mkdirSync(lock)
+      break
+    } catch {
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { recursive: true, force: true })
+      } catch {
+        /* vanished meanwhile */
+      }
+      if (Date.now() > deadline) throw new Error('the spending log is locked by another P2Flux process; try again in a moment')
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+    }
+  }
+  try {
+    return fn()
+  } finally {
+    rmSync(lock, { recursive: true, force: true })
+  }
+}
+
 function save(config: Config, list: Entry[]) {
   mkdirSync(config.dir, { recursive: true, mode: 0o700 })
-  const tmp = `${path(config)}.tmp`
-  writeFileSync(tmp, JSON.stringify(list.slice(-5000)), { mode: 0o600 })
+  const tmp = `${path(config)}.${process.pid}.${Date.now()}.tmp`
+  // Pruned by age (a week behind the newest entry), never by count: a flood of tiny entries must not
+  // push the big ones out of the day's window.
+  const newest = list.reduce((m, e) => Math.max(m, e.at), 0)
+  const cutoff = newest - 7 * DAY_MS
+  writeFileSync(tmp, JSON.stringify(list.filter((e) => e.at >= cutoff).slice(-50_000)), { mode: 0o600 })
   renameSync(tmp, path(config))
 }
 
-const DAY_MS = 86_400_000
 /** Money that left the wallet in the last 24 hours: payments and prepaid deposits, not vouchers (those spend a deposit already counted). */
 export const spentToday = (list: Entry[], now = Date.now()): bigint =>
   list.filter((e) => now - e.at < DAY_MS && e.kind !== 'voucher' && e.kind !== 'refund').reduce((sum, e) => sum + BigInt(e.units), 0n)
@@ -91,11 +124,11 @@ export function rememberAccess(config: Config, host: string, token: string | nul
 
 /** Reserve before paying; returns a function that replaces the reservation with what happened. */
 export function reserve(config: Config, url: string, units: bigint, now = Date.now()) {
-  const list = entries(config)
   const reservation: Entry = { at: now, url, units: units.toString(), kind: 'reserved', id: randomUUID() }
-  save(config, [...list, reservation])
-  return (outcome: Entry[] ) => {
-    const current = entries(config).filter((e) => !(e.kind === 'reserved' && e.id === reservation.id))
-    save(config, [...current, ...outcome])
-  }
+  withLock(config, () => save(config, [...entries(config), reservation]))
+  return (outcome: Entry[]) =>
+    withLock(config, () => {
+      const current = entries(config).filter((e) => !(e.kind === 'reserved' && e.id === reservation.id))
+      save(config, [...current, ...outcome])
+    })
 }

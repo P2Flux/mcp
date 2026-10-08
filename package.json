@@ -1,6 +1,6 @@
 {
   "name": "@p2flux/mcp",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Let your AI assistant find and pay for web content with USDC (x402), within limits you set. The wallet stays on your computer.",
   "license": "MIT",
   "type": "module",

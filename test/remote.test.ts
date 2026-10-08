@@ -101,7 +101,7 @@ test('approve: a signature for anything but the shown payment is refused, and th
   for (const signature of ['', '0x12', 'sig', null, 5]) await assert.rejects(w.remote.approve(r.id, { ...auth(w), signature }), /not for the payment/, String(signature))
   await assert.rejects(w.remote.approve(r.id, {}), /not for the payment/)
   assert.equal(w.calls.length, 1, 'only the first, unpaid request reached the site')
-  assert.equal(w.remote.result(r.id).state, 'waiting')
+  assert.equal(w.remote.result(r.id, r.claim).state, 'waiting')
 })
 
 test('approve: a signature that is not this wallet\'s is refused', async () => {
@@ -114,13 +114,13 @@ test('approve: a signature that is not this wallet\'s is refused', async () => {
 test('approve: the page is paid with exactly what was offered and signed, once; the assistant gets text, not scripts', async () => {
   const w = world()
   const r = await opened(w)
-  assert.deepEqual(w.remote.result(r.id), { state: 'waiting', link: r.link, price: '0.05' })
+  assert.deepEqual(w.remote.result(r.id, r.claim), { state: 'waiting', link: r.link, price: '0.05' })
   assert.deepEqual(await w.remote.approve(r.id, auth(w)), { paid: true, transaction: `0x${'ab'.repeat(32)}` })
   const sent = decode(w.calls[1]!.headers['payment-signature']!)
   assert.deepEqual(sent.accepted, offer())
   assert.deepEqual(sent.payload, auth(w))
   assert.equal(sent.x402Version, 2)
-  const out = w.remote.result(r.id)
+  const out = w.remote.result(r.id, r.claim)
   assert.equal(out.state, 'paid')
   if (out.state === 'paid') {
     assert.match(out.text, /PAID-SECRET/)
@@ -136,18 +136,18 @@ test('approve: refused by the site - nothing was paid and the person may try aga
   const w = world({ paidStatus: 402 })
   const r = await opened(w)
   await assert.rejects(w.remote.approve(r.id, auth(w)), /refused \(invalid_exact_evm_insufficient_balance\).*Nothing was paid/)
-  assert.equal(w.remote.result(r.id).state, 'waiting')
+  assert.equal(w.remote.result(r.id, r.claim).state, 'waiting')
   const broken = world({ paidStatus: 500 })
   const b = await opened(broken)
   await assert.rejects(broken.remote.approve(b.id, auth(broken)), /HTTP 500/)
-  assert.equal(broken.remote.result(b.id).state, 'failed')
+  assert.equal(broken.remote.result(b.id, b.claim).state, 'failed')
   await assert.rejects(broken.remote.approve(b.id, auth(broken)), /closed/)
 })
 
 test('requests expire, and an id that was never issued opens nothing', async () => {
   const w = world()
   const r = await opened(w)
-  for (const id of ['', 'x', '../../etc', 'g'.repeat(32), '0'.repeat(32)]) assert.throws(() => w.remote.result(id), /does not exist or has expired/)
+  for (const id of ['', 'x', '../../etc', 'g'.repeat(32), '0'.repeat(32)]) assert.throws(() => w.remote.result(id, r.claim), /does not exist or has expired/)
   w.clock.now += 15 * 60_000 + 1
   assert.throws(() => w.remote.data(r.id), /expired/)
   await assert.rejects(w.remote.approve(r.id, auth(w)), /expired/)
@@ -188,14 +188,14 @@ test('approve: two approvals of one request at the same moment - one payment is 
   const refused = both.find((b) => b.status === 'rejected') as PromiseRejectedResult
   assert.match(String(refused.reason), /being made|already paid/)
   assert.equal(w.calls.filter((c) => c.headers['payment-signature']).length, 1, 'exactly one payment reached the site')
-  assert.equal(w.remote.result(r.id).state, 'paid')
+  assert.equal(w.remote.result(r.id, r.claim).state, 'paid')
 })
 
 test('approve: a signature refused by the wallet check leaves the request open for another try', async () => {
   const w = world({ valid: false })
   const r = await opened(w)
   await assert.rejects(w.remote.approve(r.id, auth(w)), /not valid/)
-  assert.equal(w.remote.result(r.id).state, 'waiting')
+  assert.equal(w.remote.result(r.id, r.claim).state, 'waiting')
 })
 
 test('request: one caller cannot hold more than 20 waiting requests - a flood from one address cannot push out everyone else', async () => {
@@ -209,7 +209,7 @@ test('access tokens: a payment that bought a period hands the token to the assis
   const w = world({ grants: true })
   const r = await opened(w)
   await w.remote.approve(r.id, auth(w))
-  const out = w.remote.result(r.id)
+  const out = w.remote.result(r.id, r.claim)
   assert.equal(out.state, 'paid')
   if (out.state === 'paid') {
     assert.match(String(out.accessToken), new RegExp(`^shop\\.example\\|${TOKEN}\\|`))
@@ -273,4 +273,11 @@ test('a full desk refuses new requests instead of evicting ones that are open or
   for (let n = 1; n < 1000; n++) await w.remote.request(URL_, undefined, `caller-${n % 50}`)
   await assert.rejects(w.remote.request(URL_, undefined, 'one-more'), /too many payment requests are open/)
   assert.equal(w.remote.data(first.id).price, '0.05', 'the first request is still there')
+})
+
+test('the approval link alone does not unlock the paid text: the claim does', async () => {
+  const w = world()
+  const r = await opened(w)
+  assert.throws(() => w.remote.result(r.id, 'not-the-claim'), /claim does not belong/)
+  assert.equal(w.remote.result(r.id, r.claim).state, 'waiting')
 })

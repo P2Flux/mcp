@@ -149,8 +149,11 @@ export function createRemote(deps) {
             if (mine >= MAX_OPEN_PER_OWNER)
                 throw new Error('too many payment requests are waiting for approval; approve or let some expire (15 minutes) first');
             const id = randomBytes(16).toString('hex');
-            open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, ...(o.says ? { says: o.says } : {}), state: 'waiting', created: now(), owner, tokens: t });
-            return { free: false, id, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units), ...(o.says ? { says: o.says } : {}) };
+            /* The link the person opens carries the id; the text they paid for is handed out only with the
+             * claim, which stays with the assistant. Forwarding the link forwards nothing else. */
+            const claim = randomBytes(16).toString('hex');
+            open.set(id, { id, claim, url, units: o.units, requirement: o.requirement, resource: o.resource, ...(o.says ? { says: o.says } : {}), state: 'waiting', created: now(), owner, tokens: t });
+            return { free: false, id, claim, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units), ...(o.says ? { says: o.says } : {}) };
         },
         /** What the approval page shows and asks the wallet to sign. Nothing here is secret. */
         data(id) {
@@ -243,8 +246,10 @@ export function createRemote(deps) {
             return { paid: true, ...(p.transaction ? { transaction: p.transaction } : {}) };
         },
         /** For the assistant: the page, once the person has approved. */
-        result(id) {
+        result(id, claim) {
             const p = get(id);
+            if (typeof claim !== 'string' || claim.length !== p.claim.length || !timingSafeEqual(Buffer.from(claim), Buffer.from(p.claim)))
+                throw new Error('this claim does not belong to that payment request');
             if (p.state === 'paid')
                 return { state: 'paid', text: p.text ?? '', price: fromUnits(p.units), ...(p.transaction ? { transaction: p.transaction } : {}), ...(p.accessToken ? { accessToken: p.accessToken, accessUntil: p.accessUntil ?? '', host: new URL(p.url).host } : {}) };
             if (p.state === 'failed')

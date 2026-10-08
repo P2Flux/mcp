@@ -36,6 +36,8 @@ const MAX_OPEN_PER_OWNER = 20
 type Requirement = { scheme: string; network: string; asset: string; amount: string; payTo: string; maxTimeoutSeconds?: number; extra?: { name?: unknown; version?: unknown; p2flux?: { recipient?: unknown } } }
 type Pending = {
   id: string
+  /** Known to the assistant that opened the request, never shown on the approval page. */
+  claim: string
   url: string
   units: bigint
   requirement: Requirement
@@ -178,8 +180,11 @@ export function createRemote(deps: RemoteDeps) {
       for (const p of open.values()) if (p.owner === owner && p.state === 'waiting') mine++
       if (mine >= MAX_OPEN_PER_OWNER) throw new Error('too many payment requests are waiting for approval; approve or let some expire (15 minutes) first')
       const id = randomBytes(16).toString('hex')
-      open.set(id, { id, url, units: o.units, requirement: o.requirement, resource: o.resource, ...(o.says ? { says: o.says } : {}), state: 'waiting', created: now(), owner, tokens: t })
-      return { free: false as const, id, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units), ...(o.says ? { says: o.says } : {}) }
+      /* The link the person opens carries the id; the text they paid for is handed out only with the
+       * claim, which stays with the assistant. Forwarding the link forwards nothing else. */
+      const claim = randomBytes(16).toString('hex')
+      open.set(id, { id, claim, url, units: o.units, requirement: o.requirement, resource: o.resource, ...(o.says ? { says: o.says } : {}), state: 'waiting', created: now(), owner, tokens: t })
+      return { free: false as const, id, claim, link: `${deps.publicUrl}/approve/${id}`, price: fromUnits(o.units), ...(o.says ? { says: o.says } : {}) }
     },
 
     /** What the approval page shows and asks the wallet to sign. Nothing here is secret. */
@@ -270,8 +275,9 @@ export function createRemote(deps: RemoteDeps) {
     },
 
     /** For the assistant: the page, once the person has approved. */
-    result(id: string) {
+    result(id: string, claim: string) {
       const p = get(id)
+      if (typeof claim !== 'string' || claim.length !== p.claim.length || !timingSafeEqual(Buffer.from(claim), Buffer.from(p.claim))) throw new Error('this claim does not belong to that payment request')
       if (p.state === 'paid') return { state: 'paid' as const, text: p.text ?? '', price: fromUnits(p.units), ...(p.transaction ? { transaction: p.transaction } : {}), ...(p.accessToken ? { accessToken: p.accessToken, accessUntil: p.accessUntil ?? '', host: new URL(p.url).host } : {}) }
       if (p.state === 'failed') return { state: 'failed' as const, error: p.error ?? 'the payment failed' }
       return { state: 'waiting' as const, link: `${deps.publicUrl}/approve/${p.id}`, price: fromUnits(p.units) }

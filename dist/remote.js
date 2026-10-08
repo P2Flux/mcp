@@ -68,15 +68,15 @@ const remoteTools = (owner) => ({
                 `This page costs ${r.price} USDC (${network.label}).`,
                 ...(r.says ? [`The site says what it buys (the site's own words): "${r.says}"`] : []),
                 `Ask the user to open this link and approve the payment in their wallet: ${r.link}`,
-                `Then call get_paid_page with request_id "${r.id}". The link is valid for 15 minutes.`,
+                `Then call get_paid_page with request_id "${r.id}" and claim "${r.claim}". The link is valid for 15 minutes.`,
             ].join('\n');
         },
     },
     get_paid_page: {
         description: 'Get the text of a page after the user approved its payment (see request_paid_page).',
-        input: { request_id: z.string().max(64).describe('The request_id from request_paid_page.') },
-        run: async ({ request_id }) => {
-            const r = remote.result(request_id);
+        input: { request_id: z.string().max(64).describe('The request_id from request_paid_page.'), claim: z.string().max(64).describe('The claim from request_paid_page (not on the approval link).') },
+        run: async ({ request_id, claim }) => {
+            const r = remote.result(request_id, claim);
             if (r.state === 'waiting')
                 return `Not approved yet. The user must open ${r.link} and approve ${r.price} USDC in their wallet. Ask them, then call this again.`;
             if (r.state === 'failed')
@@ -135,7 +135,7 @@ const server = createServer(async (req, res) => {
             if (req.method !== 'POST')
                 return json(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null });
             // Stateless: nothing about a conversation is kept here but the payment requests, found by their id.
-            const mcp = new McpServer({ name: 'p2flux', version: '0.3.3' });
+            const mcp = new McpServer({ name: 'p2flux', version: '0.3.4' });
             for (const [name, tool] of Object.entries(remoteTools(addressOf(req)))) {
                 mcp.registerTool(name, { description: tool.description, inputSchema: tool.input }, (async (args) => {
                     try {

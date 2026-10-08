@@ -1,3 +1,4 @@
+import { isPublicAddress } from './remote/net.js';
 import { join } from 'node:path';
 import { x402Client, wrapFetchWithPayment } from '@x402/fetch';
 import { ExactEvmScheme, toClientEvmSigner } from '@x402/evm';
@@ -34,6 +35,11 @@ export function checkedUrl(config, input) {
     }
     if (url.username || url.password)
         throw new Error('addresses with a user name or password are not paid');
+    /* Not a general page fetcher: a page's text can steer the assistant, and an intranet address is
+     * not a shop. Literal addresses must be public; names that mean "this machine" are refused. */
+    const host = url.hostname.replace(/^\[|\]$/g, '');
+    if (!local && (/^[\d.]+$|:/.test(host) ? !isPublicAddress(host) : /\.(local|localhost|internal|lan|home|corp)$/i.test(host)))
+        throw new Error('only public web addresses are paid');
     return url;
 }
 /** A requirement whose transfer is the plain EIP-3009 authorization (the default), not Permit2. */
