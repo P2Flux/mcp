@@ -1,0 +1,66 @@
+# Publishes @p2flux/mcp to npm when a GitHub Release is published - never on a push.
+#
+# No npm token is stored: publication uses npm's trusted publishing over GitHub OIDC. That only works
+# once the package's settings on npmjs.com name this repository (P2Flux/mcp) and this workflow file
+# (release.yml) as its trusted publisher; until then the publish step answers 404. The last step fails
+# the run if the published version carries no provenance attestation.
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token npm exchanges for publish rights
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # npm's trusted publishing needs a recent CLI; the runner's bundled version may predate it.
+      - run: npm install -g npm@latest
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: The tag matches package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json $VERSION" >&2
+            exit 1
+          fi
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm audit --omit=dev
+
+      # dist/ is committed (the .mcpb bundle is packed from it): a stale one must not reach the registry.
+      - name: The build reproduces the committed dist
+        run: |
+          npm run build
+          if ! git diff --quiet -- dist; then
+            echo "dist/ is stale - run npm run build and commit it" >&2
+            git --no-pager diff --stat -- dist
+            exit 1
+          fi
+
+      - run: npm publish --provenance --access public
+
+      - name: The published version carries a provenance attestation
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "@p2flux/mcp@$VERSION" dist.attestations.url | grep -q '^https://'; then exit 0; fi
+            sleep 10
+          done
+          echo "@p2flux/mcp@$VERSION is on npm without a provenance attestation" >&2
+          exit 1

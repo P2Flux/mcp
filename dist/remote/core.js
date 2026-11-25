@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fromUnits, toUnits } from '../config.js';
-import { MAX_TEXT, offerText, offersFrom, toText } from '../pay.js';
+import { MAX_TEXT, offerText, offersFrom, quoteSite, toText } from '../pay.js';
 import { ACCESS_TOKEN } from '../ledger.js';
 /**
  * Paying from an assistant that runs on someone else's computer (ChatGPT, claude.ai): there is no
@@ -26,6 +26,9 @@ export const callerKey = (address) => {
     const full = [...groups, ...Array(Math.max(0, 8 - groups.length - rest.length)).fill('0'), ...rest];
     return full.slice(0, 4).map((g) => g.toLowerCase().padStart(4, '0')).join(':') + '::/64';
 };
+/** A tool call needs no array or object of more than 32 entries and nothing nested deeper than 8. Checked
+ *  before the MCP library validates anything: validators allocate per element (GHSA-mrhx-c7xc-m3w5). */
+export const bounded = (v, depth = 0) => typeof v !== 'object' || v === null || (depth < 8 && Object.keys(v).length <= 32 && Object.values(v).every((x) => bounded(x, depth + 1)));
 const USER_AGENT = 'P2Flux-MCP/0.3 (remote; +https://p2flux.com)';
 const TTL_MS = 15 * 60_000;
 const MAX_OPEN = 1_000;
@@ -101,7 +104,7 @@ export function createRemote(deps) {
             throw new Error(`this page costs ${fromUnits(exact.units)} USDC, above the maximum of ${fromUnits(maxPrice)} given for it. Nothing was paid.`);
         if (requireBudget && exact.units > confirmAbove && (maxPrice === null || maxPrice < exact.units)) {
             const says = offerText(header);
-            throw new Error(`this page costs ${fromUnits(exact.units)} USDC${says ? ` - the site says: "${says}"` : ''}. That is more than ${fromUnits(confirmAbove)} USDC, so ask the user first whether they want to pay it; if they do, call again with max_price "${fromUnits(exact.units)}". Nothing was paid.`);
+            throw new Error(`this page costs ${fromUnits(exact.units)} USDC. That is more than ${fromUnits(confirmAbove)} USDC, so ask the user first whether they want to pay it; if they do, call again with max_price "${fromUnits(exact.units)}". Nothing was paid.${says ? `\nWhat the site says it sells:\n${quoteSite(says)}` : ''}`);
         }
         // Only sellers paid through P2Flux: payTo must be the P2Flux address of the wallet the site names.
         const recipient = requirement.extra?.p2flux?.recipient;
@@ -120,7 +123,7 @@ export function createRemote(deps) {
             const o = await offerOf(url, null, t);
             if (o.free)
                 return t.length ? 'This page can be read without paying (with the access tokens given).' : 'This page is free to read.';
-            return `This page costs ${fromUnits(o.units)} USDC.` + (o.says ? `\nThe site says what it buys (the site's own words): "${o.says}"` : '');
+            return `This page costs ${fromUnits(o.units)} USDC.` + (o.says ? `\nWhat the site says it sells:\n${quoteSite(o.says)}` : '');
         },
         /** Open a payment request for the person to approve. */
         async request(url, maxPrice, owner = '', tokens) {

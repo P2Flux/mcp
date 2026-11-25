@@ -101,10 +101,20 @@ export function rememberAccess(config, host, token, expires, now = Date.now()) {
     renameSync(tmp, accessPath(config));
     return until;
 }
-/** Reserve before paying; returns a function that replaces the reservation with what happened. */
-export function reserve(config, url, units, now = Date.now()) {
+/**
+ * Reserve before paying; returns a function that replaces the reservation with what happened.
+ * `refuse` sees the log under the lock and answers why this money may not leave (it is then thrown and
+ * nothing is reserved): a limit checked outside the lock lets two processes both pass it.
+ */
+export function reserve(config, url, units, now = Date.now(), refuse) {
     const reservation = { at: now, url, units: units.toString(), kind: 'reserved', id: randomUUID() };
-    withLock(config, () => save(config, [...entries(config), reservation]));
+    withLock(config, () => {
+        const list = entries(config);
+        const why = refuse?.(list);
+        if (why)
+            throw new Error(why);
+        save(config, [...list, reservation]);
+    });
     return (outcome) => withLock(config, () => {
         const current = entries(config).filter((e) => !(e.kind === 'reserved' && e.id === reservation.id));
         save(config, [...current, ...outcome]);
