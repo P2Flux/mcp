@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { fromUnits, toUnits, type Config } from './config.js'
 import { entries, spentToday } from './ledger.js'
-import { checkPrice, quoteSite, readPaid, UNTRUSTED, withdrawPrepaid, type Ask } from './pay.js'
+import { checkPrice, plainText, quoteSite, readPaid, UNTRUSTED, withdrawPrepaid, type Ask } from './pay.js'
 import { account, usdcBalance, walletExists } from './wallet.js'
 
 /**
@@ -61,15 +61,14 @@ export function tools(config: Config, f: Fetch = fetch, ask?: Ask) {
         if (!res.ok) throw new Error(`the directory answered HTTP ${res.status}`)
         const { sites } = (await res.json()) as { sites: { site: string; name: string; description: string; price: string; samples: { title: string; url: string; price: string }[] }[] }
         if (!sites.length) return `No sites found for "${query}".`
-        const clip = (s: unknown, n: number) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n)
-        return [
-          UNTRUSTED,
+        const clip = plainText
+        return quoteSite([
           ...sites.map((s) =>
             [`- ${clip(s.name, 120)} - ${clip(s.site, 300)} - ${clip(s.price, 12)} USDC per page`, s.description ? `  ${clip(s.description, 300)}` : '', ...s.samples.slice(0, 5).map((p) => `  * ${clip(p.title, 160)} (${clip(p.price, 12)} USDC): ${clip(p.url, 500)}`)]
               .filter(Boolean)
               .join('\n'),
           ),
-        ].join('\n')
+        ].join('\n'))
       },
     },
     check_price: {

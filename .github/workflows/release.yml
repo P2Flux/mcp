@@ -1,9 +1,13 @@
 # Publishes @p2flux/mcp to npm when a GitHub Release is published - never on a push.
 #
 # No npm token is stored: publication uses npm's trusted publishing over GitHub OIDC. That only works
-# once the package's settings on npmjs.com name this repository (P2Flux/mcp) and this workflow file
-# (release.yml) as its trusted publisher; until then the publish step answers 404. The last step fails
-# the run if the published version carries no provenance attestation.
+# because the package's settings on npmjs.com name this repository (P2Flux/mcp) and this workflow file
+# (release.yml) as its trusted publisher (set 25 Nov 2026).
+#
+# Two jobs, on purpose: everything that runs third-party code (dependency installs, tests, the build)
+# happens in `build`, which cannot ask for the OIDC token. `publish` alone can, and it runs no
+# dependency code at all - it publishes the tarball `build` packed. A compromised dependency therefore
+# cannot publish under our name. Actions are pinned to commit SHAs, npm to an exact version.
 name: release
 
 on:
@@ -12,23 +16,19 @@ on:
 
 permissions:
   contents: read
-  id-token: write # the OIDC token npm exchanges for publish rights
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
 
-      # npm's trusted publishing needs a recent CLI; the runner's bundled version may predate it.
-      - run: npm install -g npm@latest
-
-      - run: npm ci --no-audit --no-fund
+      # No install scripts: the only ones in the tree (esbuild, fsevents) are not needed to build or test.
+      - run: npm ci --no-audit --no-fund --ignore-scripts
 
       - name: The tag matches package.json
         run: |
@@ -47,17 +47,44 @@ jobs:
       - name: The build reproduces the committed dist
         run: |
           npm run build
-          if ! git diff --quiet -- dist; then
+          if [ -n "$(git status --porcelain -- dist)" ]; then
             echo "dist/ is stale - run npm run build and commit it" >&2
-            git --no-pager diff --stat -- dist
+            git status --porcelain -- dist
             exit 1
           fi
 
-      - run: npm publish --provenance --access public
+      - run: npm pack --ignore-scripts
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package
+          path: p2flux-mcp-*.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # the OIDC token npm exchanges for publish rights - this job only
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or newer; exact version, not "latest".
+      - run: npm install -g npm@11.6.2 --ignore-scripts
+
+      - run: npm publish ./p2flux-mcp-*.tgz --provenance --access public
 
       - name: The published version carries a provenance attestation
         run: |
-          VERSION="$(node -p "require('./package.json').version")"
+          VERSION="${GITHUB_REF_NAME#v}"
           for attempt in 1 2 3 4 5 6; do
             if npm view "@p2flux/mcp@$VERSION" dist.attestations.url | grep -q '^https://'; then exit 0; fi
             sleep 10

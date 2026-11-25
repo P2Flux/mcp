@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { fromUnits, toUnits } from './config.js';
 import { entries, spentToday } from './ledger.js';
-import { checkPrice, quoteSite, readPaid, UNTRUSTED, withdrawPrepaid } from './pay.js';
+import { checkPrice, plainText, quoteSite, readPaid, UNTRUSTED, withdrawPrepaid } from './pay.js';
 import { account, usdcBalance, walletExists } from './wallet.js';
 const limits = (config) => `Limits: ${fromUnits(config.perPayment)} USDC per payment, ${fromUnits(config.perDay)} USDC per day` +
     (config.maxPrepaid > 0n ? `, prepaid deposits up to ${fromUnits(config.maxPrepaid)} USDC.` : ', prepaid off.');
@@ -47,13 +47,12 @@ export function tools(config, f = fetch, ask) {
                 const { sites } = (await res.json());
                 if (!sites.length)
                     return `No sites found for "${query}".`;
-                const clip = (s, n) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n);
-                return [
-                    UNTRUSTED,
+                const clip = plainText;
+                return quoteSite([
                     ...sites.map((s) => [`- ${clip(s.name, 120)} - ${clip(s.site, 300)} - ${clip(s.price, 12)} USDC per page`, s.description ? `  ${clip(s.description, 300)}` : '', ...s.samples.slice(0, 5).map((p) => `  * ${clip(p.title, 160)} (${clip(p.price, 12)} USDC): ${clip(p.url, 500)}`)]
                         .filter(Boolean)
                         .join('\n')),
-                ].join('\n');
+                ].join('\n'));
             },
         },
         check_price: {
