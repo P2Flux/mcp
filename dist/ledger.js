@@ -25,8 +25,17 @@ function withLock(config, fn) {
         }
         catch {
             try {
-                if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS)
-                    rmSync(lock, { recursive: true, force: true });
+                /* Two waiters can both judge one dead lock stale; the slower must not delete the lock the faster
+                 * one has taken since. So the stale lock is first moved aside under a name of our own (atomic:
+                 * only one waiter gets it), checked again there, and put back if it turns out to be a fresh one. */
+                if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+                    const aside = `${lock}.${randomUUID()}.stale`;
+                    renameSync(lock, aside);
+                    if (Date.now() - statSync(aside).mtimeMs > LOCK_STALE_MS)
+                        rmSync(aside, { recursive: true, force: true });
+                    else
+                        renameSync(aside, lock);
+                }
             }
             catch {
                 /* vanished meanwhile */
@@ -55,9 +64,9 @@ function save(config, list) {
 }
 /** Money that left the wallet in the last 24 hours: payments and prepaid deposits, not vouchers (those spend a deposit already counted). */
 export const spentToday = (list, now = Date.now()) => list.filter((e) => now - e.at < DAY_MS && e.kind !== 'voucher' && e.kind !== 'refund').reduce((sum, e) => sum + BigInt(e.units), 0n);
-/** Why `units` may not leave the wallet now, or null. */
+/** Why a page payment of `units` may not leave the wallet now, or null. (Deposits are bounded by the prepaid cap, in depositFor.) */
 export function refusal(config, units, list, now = Date.now()) {
-    if (units > config.perPayment && units > config.maxPrepaid)
+    if (units > config.perPayment)
         return 'above the limit per payment';
     if (spentToday(list, now) + units > config.perDay)
         return 'above the daily limit';

@@ -338,10 +338,13 @@ export async function readPaid(config, input, maxPrice, f = fetch, now = Date.no
         res = await paying('exact', price, exact.payTo)(url);
     }
     catch (err) {
-        // Nothing was signed if the client refused the offer; anything else is unknown and stays counted.
-        if (/No network\/scheme registered|no payment requirements|Failed to create payment/i.test(String(err.message)))
+        // Nothing was signed if the client could not read or refused the offer (the library's own prefix,
+        // at the start: site text later in a message must not release money); anything else stays counted.
+        const message = String(err.message);
+        if (/^Failed to (create payment payload|parse payment requirements)/.test(message))
             settle([]);
-        throw new Error(`the payment could not be made: ${err.message}`);
+        // The library's message can quote the site's 402 (its JSON, an abort reason): fenced, like refund errors.
+        throw new Error(`the payment could not be made. Details, which may quote the site:\n${quoteSite(plainText(message, 300))}`);
     }
     if (res.status === 402) {
         await res.body?.cancel();

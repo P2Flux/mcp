@@ -5,9 +5,12 @@
 # (release.yml) as its trusted publisher (set 25 Nov 2026).
 #
 # Two jobs, on purpose: everything that runs third-party code (dependency installs, tests, the build)
-# happens in `build`, which cannot ask for the OIDC token. `publish` alone can, and it runs no
-# dependency code at all - it publishes the tarball `build` packed. A compromised dependency therefore
-# cannot publish under our name. Actions are pinned to commit SHAs, npm to an exact version.
+# happens in `build`, which cannot ask for the OIDC token. `publish` alone can, and it installs no
+# dependencies and runs no package scripts: it checks out the same commit, packs it itself (dist/ is
+# committed, and `build` checks that the build reproduces it) and publishes that tarball only if it is
+# byte-identical to the one `build` tested and packed. A dependency that changes files during `build`
+# can therefore fail the release but not change what is published. What `publish` does trust: the
+# pinned GitHub actions it uses, Node and npm. Actions are pinned to commit SHAs, npm to an exact version.
 name: release
 
 on:
@@ -22,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -68,19 +73,39 @@ jobs:
       contents: read
       id-token: write # the OIDC token npm exchanges for publish rights - this job only
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      # The commit the release points at - the same one `build` checked out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: package
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      # Packed here, from the committed files, with the same npm as `build` (before the upgrade below):
+      # no install, no scripts.
+      - run: npm pack --ignore-scripts
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package
+          path: built
+
+      - name: The tarball is the one build tested
+        run: |
+          OURS="$(ls p2flux-mcp-*.tgz)"
+          test -f "built/$OURS" || { echo "build packed no $OURS" >&2; exit 1; }
+          sha256sum "$OURS" "built/$OURS"
+          if [ "$(sha256sum < "$OURS")" != "$(sha256sum < "built/$OURS")" ]; then
+            echo "$OURS packed here differs from the one build tested - not publishing" >&2
+            exit 1
+          fi
+
       # Trusted publishing needs npm 11.5.1 or newer; exact version, not "latest".
       - run: npm install -g npm@11.6.2 --ignore-scripts
 
-      - run: npm publish ./p2flux-mcp-*.tgz --provenance --access public
+      - run: npm publish ./p2flux-mcp-*.tgz --provenance --access public --ignore-scripts
 
       - name: The published version carries a provenance attestation
         run: |
